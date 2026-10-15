@@ -439,9 +439,9 @@ def _sync_campaign_master():
 
 
 
-CH_URL = "https://pdhsuv47ec.ap-south-1.aws.clickhouse.cloud:8443/"
-CH_USER = "default"
-CH_PASS = "ZFlujj9SA_Iei"
+CH_URL  = os.environ.get('CH_URL', "https://pdhsuv47ec.ap-south-1.aws.clickhouse.cloud:8443/")
+CH_USER = os.environ.get('CH_USER', "default")
+CH_PASS = os.environ.get('CH_PASS', "ZFlujj9SA_Iei")
 
 _LAST_CH_ERROR = None
 

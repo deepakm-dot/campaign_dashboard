@@ -10,9 +10,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 DB_FILE = os.environ.get('DB_FILE', os.path.join(ROOT_DIR, 'campaign_dashboard.db'))
 SHEETS_URL = "https://script.google.com/macros/s/AKfycbwLu3feQq0BCxUFFxpUhamKLfNa5njxmJLZ4yBRY9pmPtsgBIXEFSzeVADBt5hlG9Y_DQ/exec"
-CH_URL  = "https://pdhsuv47ec.ap-south-1.aws.clickhouse.cloud:8443/"
-CH_USER = "default"
-CH_PASS = "ZFlujj9SA_Iei"
+CH_URL  = os.environ.get('CH_URL', "https://pdhsuv47ec.ap-south-1.aws.clickhouse.cloud:8443/")
+CH_USER = os.environ.get('CH_USER', "default")
+CH_PASS = os.environ.get('CH_PASS', "ZFlujj9SA_Iei")
 def load_branch_map():
     import openpyxl, re
     branch_map = {}
