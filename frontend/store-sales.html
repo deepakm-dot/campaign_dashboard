@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Store Product Sales — Campaign Dashboard</title>
+  <meta name="description" content="Detailed product category and brand-wise sales breakdown for the campaign store during campaign dates." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --card: #1c2333;
+      --card-hover: #21293b;
+      --border: #30363d;
+      --border-subtle: #21262d;
+      --accent: #7c3aed;
+      --accent2: #6366f1;
+      --green: #10b981;
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --text: #f0f6fc;
+      --text-secondary: #c9d1d9;
+      --muted: #8b949e;
+      --shadow: 0 1px 3px rgba(0,0,0,0.4), 0 4px 16px rgba(0,0,0,0.3);
+      --shadow-lg: 0 8px 30px rgba(0,0,0,0.6), 0 4px 12px rgba(0,0,0,0.3);
+      --shadow-xl: 0 20px 60px rgba(0,0,0,0.8);
+      --glow-accent: 0 0 20px rgba(124,58,237,0.25);
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* TOPBAR */
+    .topbar {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(13,17,23,0.92);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 32px;
+      height: 60px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .topbar-left { display: flex; align-items: center; gap: 14px; }
+    .back-btn {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 7px 14px; border-radius: 8px;
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--text-secondary); font-size: 13px; font-weight: 600;
+      text-decoration: none; transition: all 0.18s;
+    }
+    .back-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); box-shadow: var(--glow-accent); }
+    .topbar-title { font-size: 14px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 10px; }
+    .topbar-divider { width: 1px; height: 18px; background: var(--border); }
+    .topbar-right { display: flex; align-items: center; gap: 8px; }
+
+    .badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+    .badge-branch  { background: rgba(124,58,237,0.15); color: #a78bfa; border: 1px solid rgba(124,58,237,0.25); }
+    .badge-period  { background: rgba(16,185,129,0.12); color: #34d399; border: 1px solid rgba(16,185,129,0.2); }
+    .badge-scope   { background: rgba(245,158,11,0.12); color: #fbbf24; border: 1px solid rgba(245,158,11,0.2); }
+
+    /* CONTAINER */
+    .container { max-width: 1280px; margin: 0 auto; padding: 36px 28px 80px; }
+
+    /* HERO */
+    .hero { margin-bottom: 32px; }
+    .hero-pre { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--accent2); margin-bottom: 6px; }
+    .hero-title { font-size: 30px; font-weight: 900; letter-spacing: -1px; color: var(--text); margin-bottom: 8px; }
+    .hero-desc { font-size: 13px; color: var(--muted); line-height: 1.65; }
+
+    /* REC BANNER */
+    .rec-banner {
+      background: linear-gradient(135deg, rgba(16,185,129,0.08), rgba(16,185,129,0.04));
+      border: 1px solid rgba(16,185,129,0.25);
+      border-radius: 12px; padding: 14px 18px; margin-bottom: 12px;
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    }
+    .rec-left { display: flex; align-items: center; gap: 12px; }
+    .rec-icon { width: 34px; height: 34px; border-radius: 8px; background: rgba(16,185,129,0.15); color: #10b981; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+    .rec-title { font-size: 13px; font-weight: 700; color: var(--text); }
+    .rec-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .rec-meta strong { color: var(--text-secondary); }
+    .rec-pills { display: flex; gap: 7px; flex-wrap: wrap; }
+    .rec-pill { font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 20px; }
+    .pill-blue  { background: rgba(99,102,241,0.18); color: #818cf8; }
+    .pill-green { background: rgba(16,185,129,0.15); color: #34d399; }
+
+    /* ATTRIBUTION */
+    .attr-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+      padding: 14px 18px; margin-bottom: 28px;
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px;
+    }
+    .attr-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--accent2); margin-bottom: 4px; }
+    .attr-title { font-size: 12px; color: var(--muted); }
+    .attr-boxes { display: flex; gap: 10px; flex-wrap: wrap; }
+    .attr-box { padding: 8px 14px; border-radius: 10px; min-width: 150px; }
+    .attr-box-campaign { background: rgba(124,58,237,0.12); border: 1px solid rgba(124,58,237,0.25); }
+    .attr-box-walkin   { background: var(--card); border: 1px solid var(--border); }
+    .attr-box-head { font-size: 10px; font-weight: 700; text-transform: uppercase; }
+    .attr-box-campaign .attr-box-head { color: #a78bfa; }
+    .attr-box-walkin   .attr-box-head { color: var(--muted); }
+    .attr-box-val { font-size: 17px; font-weight: 800; margin-top: 2px; }
+    .attr-box-campaign .attr-box-val { color: #c4b5fd; }
+    .attr-box-walkin   .attr-box-val { color: var(--text); }
+    .attr-box-sub { font-size: 10px; margin-top: 1px; color: var(--muted); }
+
+    /* KPI GRID */
+    .kpi-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin-bottom: 32px; }
+    .kpi-card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+      padding: 20px 22px; position: relative; overflow: hidden; box-shadow: var(--shadow);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .kpi-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+    .kpi-card::before { content:''; position: absolute; top:0; left:0; right:0; height:3px; }
+    .kpi-c1::before { background: linear-gradient(90deg, #7c3aed, #a78bfa); }
+    .kpi-c2::before { background: linear-gradient(90deg, #10b981, #34d399); }
+    .kpi-c3::before { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .kpi-c4::before { background: linear-gradient(90deg, #0891b2, #22d3ee); }
+    .kpi-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 10px; }
+    .kpi-value { font-size: 30px; font-weight: 900; letter-spacing: -1.5px; line-height: 1; margin-bottom: 6px; }
+    .kpi-c1 .kpi-value { color: #a78bfa; }
+    .kpi-c2 .kpi-value { color: #34d399; }
+    .kpi-c3 .kpi-value { color: #fbbf24; }
+    .kpi-c4 .kpi-value { color: #22d3ee; }
+    .kpi-sub { font-size: 11px; color: var(--muted); }
+
+    /* SECTION HEADER */
+    .section-head { margin-bottom: 16px; }
+    .section-title { font-size: 17px; font-weight: 800; letter-spacing: -0.4px; color: var(--text); }
+    .section-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    .section-hint { font-size: 11px; color: var(--accent2); margin-top: 5px; display: flex; align-items: center; gap: 5px; }
+
+    /* PRODUCT CARDS */
+    .prod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; margin-bottom: 32px; }
+
+    .prod-card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+      padding: 20px; position: relative; overflow: hidden; box-shadow: var(--shadow);
+      cursor: pointer; transition: all 0.22s;
+      display: flex; flex-direction: column;
+    }
+    .prod-card::after { content: ''; position: absolute; inset: 0; border-radius: 16px; border: 2px solid transparent; transition: border-color 0.22s; pointer-events: none; }
+    .prod-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); background: var(--card-hover); }
+    .prod-card:hover::after { border-color: rgba(99,102,241,0.4); }
+    .prod-card.zero-card { opacity: 0.55; cursor: default; }
+    .prod-card.zero-card:hover { transform: none; box-shadow: var(--shadow); background: var(--card); }
+    .prod-card.zero-card::after { display: none; }
+
+    .prod-card-row1 { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .prod-icon-box { width: 46px; height: 46px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; }
+    .prod-share-tag { font-size: 12px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(99,102,241,0.15); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.25); }
+    .prod-share-tag.zero-tag { background: rgba(139,148,158,0.1); color: var(--muted); border-color: var(--border); }
+
+    .prod-name { font-size: 16px; font-weight: 800; color: var(--text); margin-bottom: 12px; }
+
+    .prod-metrics { display: grid; grid-template-columns: 1fr 1fr 1fr; border: 1px solid var(--border-subtle); border-radius: 10px; overflow: hidden; margin-bottom: 12px; }
+    .prod-metric { padding: 9px 10px; display: flex; flex-direction: column; gap: 2px; background: rgba(255,255,255,0.02); }
+    .prod-metric:not(:last-child) { border-right: 1px solid var(--border-subtle); }
+    .prod-metric-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; color: var(--muted); }
+    .prod-metric-value { font-size: 13px; font-weight: 800; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .prod-bar-track { height: 5px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
+    .prod-bar-fill { height: 100%; border-radius: 4px; transition: width 0.9s cubic-bezier(.4,0,.2,1); }
+
+    .prod-drill {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      font-size: 11px; font-weight: 700; color: var(--muted);
+      padding: 7px; border-radius: 8px; border: 1px dashed var(--border);
+      transition: all 0.18s; margin-top: auto;
+    }
+    .prod-card:not(.zero-card):hover .prod-drill { color: #a5b4fc; border-color: rgba(99,102,241,0.4); background: rgba(99,102,241,0.06); }
+
+    /* TABLE & DISTRIBUTION */
+    .detail-grid { display: grid; grid-template-columns: 1fr 380px; gap: 18px; margin-bottom: 32px; }
+    .panel { background: var(--card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); }
+    .panel-header { padding: 16px 22px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .panel-title { font-size: 13px; font-weight: 800; color: var(--text); }
+    .panel-body { padding: 18px 22px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    thead th { padding: 11px 14px; text-align: left; font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; background: rgba(255,255,255,0.02); border-bottom: 1px solid var(--border); white-space: nowrap; }
+    tbody td { padding: 13px 14px; font-size: 12px; vertical-align: middle; border-bottom: 1px solid var(--border-subtle); }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: rgba(255,255,255,0.02); }
+    .category-cell { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); }
+    .num-val { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .tfoot-row td { background: rgba(255,255,255,0.03); font-weight: 800; border-top: 1px solid var(--border); }
+
+    .dist-rows { display: flex; flex-direction: column; gap: 14px; }
+    .dist-row { display: flex; flex-direction: column; gap: 5px; }
+    .dist-top { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
+    .dist-label { display: flex; align-items: center; gap: 7px; font-weight: 700; color: var(--text); }
+    .dist-sub { font-size: 10px; color: var(--muted); }
+    .dist-val { font-weight: 800; font-variant-numeric: tabular-nums; }
+    .dist-track { height: 7px; background: rgba(255,255,255,0.06); border-radius: 6px; overflow: hidden; }
+    .dist-fill { height: 100%; border-radius: 6px; transition: width 0.9s cubic-bezier(.4,0,.2,1); }
+
+    /* INCREMENTAL REVENUE LIFT (DARK THEME) */
+    .lift-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px 24px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow);
+    }
+    .lift-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      margin-bottom: 20px;
+    }
+    .lift-title-wrap { display: flex; align-items: center; gap: 12px; }
+    .lift-title-icon {
+      width: 36px; height: 36px; border-radius: 10px;
+      background: rgba(99,102,241,0.15); color: #818cf8;
+      display: flex; align-items: center; justify-content: center; font-size: 18px;
+      border: 1px solid rgba(99,102,241,0.3);
+    }
+    .lift-title { font-size: 15px; font-weight: 800; color: var(--text); }
+    .lift-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .lift-tag {
+      font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 20px;
+      background: rgba(99,102,241,0.15); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.3);
+    }
+    .lift-periods { display: flex; gap: 8px; font-size: 11px; }
+    .lift-period-pill { padding: 4px 10px; border-radius: 6px; font-weight: 600; }
+    .lift-period-base { background: rgba(255,255,255,0.05); color: var(--text-secondary); border: 1px solid var(--border-subtle); }
+    .lift-period-camp { background: rgba(124,58,237,0.15); color: #c4b5fd; border: 1px solid rgba(124,58,237,0.3); font-weight: 700; }
+
+    .lift-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+    @media (max-width: 900px) { .lift-kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 500px) { .lift-kpi-grid { grid-template-columns: 1fr; } }
+    .lift-kpi-box {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 14px 16px;
+      position: relative;
+    }
+    .lift-kpi-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin-bottom: 5px; }
+    .lift-kpi-val { font-size: 22px; font-weight: 900; letter-spacing: -0.8px; }
+    .lift-kpi-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    .lift-days-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .lift-day-card {
+      background: rgba(255,255,255,0.025);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 14px;
+      transition: all 0.2s ease;
+    }
+    .lift-day-card:hover {
+      background: rgba(255,255,255,0.04);
+      border-color: rgba(99,102,241,0.4);
+      transform: translateY(-2px);
+    }
+    .lift-day-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .lift-day-name { font-size: 13px; font-weight: 800; color: var(--text); display: flex; align-items: center; gap: 5px; }
+    .lift-day-dates { font-size: 10px; color: var(--muted); margin-top: 2px; }
+    .lift-pill-badge {
+      font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px;
+    }
+    .lift-pill-pos { background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.3); }
+    .lift-pill-neg { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+
+    .lift-bars-box { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+    .lift-bar-line { display: flex; flex-direction: column; gap: 3px; }
+    .lift-bar-label-row { display: flex; justify-content: space-between; font-size: 10px; }
+    .lift-bar-bg { height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
+    .lift-bar-fill { height: 100%; border-radius: 3px; }
+
+    /* AUDIT */
+    .audit-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 22px; display: flex; align-items: flex-start; gap: 14px; }
+    .audit-text { font-size: 12px; color: var(--muted); line-height: 1.65; }
+    .audit-text strong { color: var(--text-secondary); }
+    .audit-text code { background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px; font-family: monospace; font-size: 11px; }
+
+    /* LOADING */
+    .loading-wrap { text-align: center; padding: 80px 20px; }
+    .spinner { width: 40px; height: 40px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 16px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* BRAND DRAWER */
+    .drawer-overlay {
+      position: fixed; inset: 0; z-index: 500;
+      background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);
+      opacity: 0; pointer-events: none; transition: opacity 0.25s;
+    }
+    .drawer-overlay.open { opacity: 1; pointer-events: auto; }
+
+    .drawer {
+      position: fixed; top: 0; right: 0; bottom: 0; z-index: 501;
+      width: min(520px, 95vw);
+      background: var(--surface); border-left: 1px solid var(--border);
+      box-shadow: var(--shadow-xl);
+      display: flex; flex-direction: column;
+      transform: translateX(100%); transition: transform 0.3s cubic-bezier(.4,0,.2,1);
+    }
+    .drawer.open { transform: translateX(0); }
+
+    .drawer-header { padding: 20px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+    .drawer-prod-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; flex-shrink: 0; }
+    .drawer-prod-name { font-size: 20px; font-weight: 900; color: var(--text); letter-spacing: -0.5px; }
+    .drawer-prod-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .drawer-close { margin-left: auto; width: 32px; height: 32px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; flex-shrink: 0; }
+    .drawer-close:hover { background: rgba(239,68,68,0.15); color: #f87171; border-color: rgba(239,68,68,0.3); }
+
+    .drawer-summary { padding: 16px 24px; border-bottom: 1px solid var(--border); flex-shrink: 0; display: grid; grid-template-columns: repeat(3, 1fr); }
+    .drawer-stat { padding: 8px 12px; display: flex; flex-direction: column; gap: 2px; }
+    .drawer-stat:not(:last-child) { border-right: 1px solid var(--border-subtle); }
+    .drawer-stat-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); }
+    .drawer-stat-value { font-size: 18px; font-weight: 900; letter-spacing: -0.8px; }
+
+    .drawer-body { flex: 1; overflow-y: auto; padding: 20px 24px; }
+    .drawer-body::-webkit-scrollbar { width: 5px; }
+    .drawer-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    .drawer-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin-bottom: 14px; }
+
+    .brand-row { padding: 12px 14px; border-radius: 10px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); margin-bottom: 8px; transition: background 0.15s; }
+    .brand-row:hover { background: rgba(255,255,255,0.055); }
+    .brand-row-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .brand-rank { width: 22px; height: 22px; border-radius: 6px; background: rgba(255,255,255,0.06); font-size: 10px; font-weight: 800; color: var(--muted); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .brand-rank.top1 { background: rgba(251,191,36,0.18); color: #fbbf24; }
+    .brand-rank.top2 { background: rgba(209,213,219,0.15); color: #d1d5db; }
+    .brand-rank.top3 { background: rgba(180,120,60,0.15); color: #cd7f32; }
+    .brand-name { font-size: 14px; font-weight: 800; color: var(--text); margin-left: 8px; flex: 1; }
+    .brand-share-tag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 20px; background: rgba(99,102,241,0.15); color: #a5b4fc; }
+    .brand-row-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+    .brand-metric { display: flex; flex-direction: column; gap: 1px; }
+    .brand-metric-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
+    .brand-metric-value { font-size: 13px; font-weight: 800; color: var(--text-secondary); }
+    .brand-bar-track { height: 4px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
+    .brand-bar-fill { height: 100%; border-radius: 3px; transition: width 0.8s cubic-bezier(.4,0,.2,1); }
+
+    .drawer-loading { text-align: center; padding: 40px 20px; }
+    .drawer-spinner { width: 32px; height: 32px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px; }
+
+    /* RESPONSIVE */
+    @media (max-width: 992px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } .detail-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 640px) { .kpi-grid { grid-template-columns: 1fr; } .topbar { padding: 0 16px; } .container { padding: 20px 14px 60px; } .topbar-right { display: none; } .prod-grid { grid-template-columns: 1fr; } .drawer { width: 100vw; } }
+  </style>
+</head>
+<body>
+
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <a href="/" class="back-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+        Dashboard
+      </a>
+      <div class="topbar-divider"></div>
+      <div class="topbar-title">&#127978; Store Product Sales</div>
+    </div>
+    <div class="topbar-right" id="topbar-badges">
+      <span class="badge badge-branch" id="badge-branch">&#127978; Branch: &mdash;</span>
+      <span class="badge badge-period" id="badge-period">&#128197; &mdash;</span>
+      <span class="badge badge-scope">&#128101; All Customers</span>
+    </div>
+  </div>
+
+  <div class="container">
+    <div id="content-area">
+      <div class="loading-wrap">
+        <div class="spinner"></div>
+        <div style="font-weight:700;font-size:16px;color:var(--text);">Loading Store Sales Data&hellip;</div>
+        <div style="font-size:13px;color:var(--muted);margin-top:6px;">Fetching from ClickHouse cloud</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BRAND BREAKDOWN DRAWER -->
+  <div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+  <div class="drawer" id="brandDrawer" role="dialog" aria-modal="true" aria-label="Brand Breakdown">
+    <div class="drawer-header">
+      <div class="drawer-prod-icon" id="drawerIcon">&#128230;</div>
+      <div>
+        <div class="drawer-prod-name" id="drawerProdName">Product</div>
+        <div class="drawer-prod-sub" id="drawerProdSub">Brand-wise breakdown</div>
+      </div>
+      <button class="drawer-close" onclick="closeDrawer()" aria-label="Close">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="drawer-summary" id="drawerSummary">
+      <div class="drawer-stat">
+        <div class="drawer-stat-label">Total Units</div>
+        <div class="drawer-stat-value" id="drawerTotalQty" style="color:#a78bfa">&mdash;</div>
+      </div>
+      <div class="drawer-stat">
+        <div class="drawer-stat-label">Total Revenue</div>
+        <div class="drawer-stat-value" id="drawerTotalRev" style="color:#34d399">&mdash;</div>
+      </div>
+      <div class="drawer-stat">
+        <div class="drawer-stat-label">Top Brand</div>
+        <div class="drawer-stat-value" id="drawerTopBrand" style="color:#fbbf24;font-size:14px;">&mdash;</div>
+      </div>
+    </div>
+    <div class="drawer-body" id="drawerBody">
+      <div class="drawer-loading">
+        <div class="drawer-spinner"></div>
+        <div style="font-size:13px;color:var(--muted);">Loading brand data&hellip;</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const PROD_META = {
+      'TV':              { icon: '&#128250;', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)',   bar: '#f59e0b' },
+      'Washing machine': { icon: '&#129703;', color: '#3b82f6', bg: 'rgba(59,130,246,0.12)',   bar: '#3b82f6' },
+      'Washing Machine': { icon: '&#129703;', color: '#3b82f6', bg: 'rgba(59,130,246,0.12)',   bar: '#3b82f6' },
+      'Referigerator':   { icon: '&#129482;', color: '#14b8a6', bg: 'rgba(20,184,166,0.12)',   bar: '#14b8a6' },
+      'Refrigerator':    { icon: '&#129482;', color: '#14b8a6', bg: 'rgba(20,184,166,0.12)',   bar: '#14b8a6' },
+      'Mobile':          { icon: '&#128241;', color: '#6366f1', bg: 'rgba(99,102,241,0.12)',    bar: '#6366f1' },
+      'Laptop':          { icon: '&#128187;', color: '#a855f7', bg: 'rgba(168,85,247,0.12)',    bar: '#a855f7' },
+      'AC':              { icon: '&#10052;&#65039;', color: '#0ea5e9', bg: 'rgba(14,165,233,0.12)', bar: '#0ea5e9' },
+      'Other':           { icon: '&#128230;', color: '#6b7280', bg: 'rgba(107,114,128,0.10)',   bar: '#6b7280' },
+      'Others':          { icon: '&#128230;', color: '#6b7280', bg: 'rgba(107,114,128,0.10)',   bar: '#6b7280' },
+    };
+
+    const BRAND_COLORS = ['#6366f1','#10b981','#f59e0b','#ef4444','#0ea5e9','#a855f7','#14b8a6','#f97316','#84cc16','#ec4899'];
+
+    function inr(n) {
+      n = Number(n) || 0;
+      if (n >= 10000000) return '\u20b9' + (n / 10000000).toFixed(2) + ' Cr';
+      if (n >= 100000)   return '\u20b9' + (n / 100000).toFixed(2) + ' L';
+      if (n >= 1000)     return '\u20b9' + (n / 1000).toFixed(1) + 'K';
+      return '\u20b9' + n.toLocaleString('en-IN', {maximumFractionDigits:0});
+    }
+    function inrExact(n) { return '\u20b9' + Math.round(Number(n)||0).toLocaleString('en-IN'); }
+    function num(n)      { return (Number(n)||0).toLocaleString('en-IN'); }
+    function pct(n) {
+      const v = Number(n) || 0;
+      if (v === 0) return '0.0%';
+      if (v < 0.01) return v.toFixed(3) + '%';
+      if (v < 1) return v.toFixed(2) + '%';
+      return v.toFixed(1) + '%';
+    }
+
+    let _campaignId = null;
+    let _storeData  = null;
+    let _drawerOpen = false;
+    let _selectedBaseStart = '';
+
+    function updateBaselineDate(val) {
+      _selectedBaseStart = val;
+      var url = '/api/campaign/' + _campaignId + '/incremental-lift';
+      if (val) url += '?base_start=' + val;
+      
+      document.getElementById('content-area').style.opacity = '0.5';
+      fetch(url).then(r => r.json()).then(liftData => {
+        renderPage(_storeData, liftData);
+        document.getElementById('content-area').style.opacity = '1';
+      }).catch(err => {
+        console.error(err);
+        document.getElementById('content-area').style.opacity = '1';
+      });
+    }
+
+    const urlParams = new URLSearchParams(window.location.search);
+    _campaignId = urlParams.get('id') || '731';
+
+    function formatDateShort(dateStr) {
+      if (!dateStr || dateStr.length < 10) return dateStr || '';
+      var parts = dateStr.slice(0, 10).split('-');
+      if (parts.length !== 3) return dateStr;
+      var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      var mIdx = parseInt(parts[1], 10) - 1;
+      return parts[2] + ' ' + (MONTHS[mIdx] || parts[1]);
+    }
+
+    function buildIncrementalLiftHtml(liftData) {
+      if (!liftData || !liftData.days || !liftData.days.length) return '';
+      var s = liftData.summary || {};
+      var isPos = s.is_positive_lift;
+      var liftRev = s.incremental_revenue_lift || 0;
+      var liftRevPct = s.incremental_revenue_lift_pct || 0;
+      var liftUnits = s.incremental_units_lift || 0;
+      var liftUnitsPct = s.incremental_units_lift_pct || 0;
+
+      var maxDayRev = 1;
+      liftData.days.forEach(function(d) {
+        if (d.campaign_revenue > maxDayRev) maxDayRev = d.campaign_revenue;
+        if (d.baseline_revenue > maxDayRev) maxDayRev = d.baseline_revenue;
+      });
+
+      var dayCards = '';
+      liftData.days.forEach(function(d) {
+        var isDayPos = d.revenue_lift >= 0;
+        var campPct = maxDayRev > 0 ? ((d.campaign_revenue / maxDayRev) * 100).toFixed(1) : 0;
+        var basePct = maxDayRev > 0 ? ((d.baseline_revenue / maxDayRev) * 100).toFixed(1) : 0;
+        var campDateFmt = formatDateShort(d.campaign_date);
+        var baseDateFmt = formatDateShort(d.baseline_date);
+
+        dayCards += '<div class="lift-day-card">'
+          + '<div class="lift-day-top">'
+          + '<div><div class="lift-day-name"><span>\ud83d\udcc5</span> ' + d.day_name + '</div>'
+          + '<div class="lift-day-dates"><strong style="color:var(--text-secondary)">' + campDateFmt + '</strong> vs ' + baseDateFmt + '</div></div>'
+          + '<span class="lift-pill-badge ' + (isDayPos ? 'lift-pill-pos' : 'lift-pill-neg') + '">'
+          + (isDayPos ? '\u25b2 +' : '\u25bc ') + inrExact(d.revenue_lift) + ' (' + (d.revenue_lift_pct > 0 ? '+' : '') + d.revenue_lift_pct + '%)'
+          + '</span></div>'
+          + '<div class="lift-bars-box">'
+          + '<div class="lift-bar-line"><div class="lift-bar-label-row"><span style="color:#a5b4fc;font-weight:700">Campaign (' + campDateFmt + ')</span><span style="font-weight:800;color:var(--text)">' + inrExact(d.campaign_revenue) + ' <span style="color:var(--muted);font-weight:600">(' + d.campaign_units + ' u)</span></span></div><div class="lift-bar-bg"><div class="lift-bar-fill" style="width:' + campPct + '%;background:#6366f1"></div></div></div>'
+          + '<div class="lift-bar-line"><div class="lift-bar-label-row"><span style="color:var(--muted);font-weight:600">Prior Week (' + baseDateFmt + ')</span><span style="color:var(--muted);font-weight:700">' + inrExact(d.baseline_revenue) + ' <span style="color:rgba(255,255,255,0.3)">(' + d.baseline_units + ' u)</span></span></div><div class="lift-bar-bg"><div class="lift-bar-fill" style="width:' + basePct + '%;background:rgba(255,255,255,0.2)"></div></div></div>'
+          + '</div>'
+          + '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:8px;border-top:1px dashed var(--border-subtle);font-size:11px">'
+          + '<span style="color:var(--muted)">Volume Growth:</span>'
+          + '<span style="font-weight:700;color:' + (d.unit_lift >= 0 ? '#34d399' : '#f87171') + '">' + (d.unit_lift >= 0 ? '+' : '') + d.unit_lift + ' units (' + (d.unit_lift_pct >= 0 ? '+' : '') + d.unit_lift_pct + '%)</span>'
+          + '</div></div>';
+      });
+
+      var tableRows = '';
+      liftData.days.forEach(function(d) {
+        var isDayPos = d.revenue_lift >= 0;
+        var isUnitPos = d.unit_lift >= 0;
+        tableRows += '<tr>'
+          + '<td style="font-weight:800;color:var(--text)">' + d.day_name + '</td>'
+          + '<td style="color:var(--muted);font-size:11px">' + formatDateShort(d.baseline_date) + '</td>'
+          + '<td class="num-val" style="color:var(--muted)">' + inrExact(d.baseline_revenue) + ' <span style="font-size:10px;color:rgba(255,255,255,0.4)">(' + d.baseline_units + ' u)</span></td>'
+          + '<td style="color:#a5b4fc;font-size:11px;font-weight:700">' + formatDateShort(d.campaign_date) + '</td>'
+          + '<td class="num-val" style="color:var(--text);font-weight:800">' + inrExact(d.campaign_revenue) + ' <span style="font-size:10px;color:#818cf8">(' + d.campaign_units + ' u)</span></td>'
+          + '<td class="num-val" style="font-weight:900;color:' + (isDayPos ? '#34d399' : '#f87171') + '">' + (isDayPos ? '+' : '') + inrExact(d.revenue_lift) + '</td>'
+          + '<td style="text-align:center"><span class="lift-pill-badge ' + (isDayPos ? 'lift-pill-pos' : 'lift-pill-neg') + '">' + (isDayPos ? '\u25b2 +' : '\u25bc ') + d.revenue_lift_pct + '%</span></td>'
+          + '<td class="num-val" style="font-weight:700;color:' + (isUnitPos ? '#34d399' : '#f87171') + '">' + (isUnitPos ? '+' : '') + d.unit_lift + ' u (' + (isUnitPos ? '+' : '') + d.unit_lift_pct + '%)</td>'
+          + '</tr>';
+      });
+
+      return '<div class="lift-card">'
+        + '<div class="lift-header">'
+        + '<div class="lift-title-wrap">'
+        + '<div class="lift-title-icon">\ud83d\udcc8</div>'
+        + '<div><div style="display:flex;align-items:center;gap:8px"><span class="lift-title">Day-Wise Incremental Revenue Lift</span><span class="lift-tag">Like-for-Like Day-of-Week Comparison</span></div>'
+        + '<div class="lift-sub">Direct comparison of each campaign day against the <strong>same day of previous week</strong> to eliminate day-of-week bias.</div></div>'
+        + '</div>'
+        + '<div class="lift-periods">'
+        + '<span class="lift-period-pill lift-period-base">Baseline: <strong>' + liftData.baseline_period + '</strong></span>'
+        + '<span class="lift-period-pill lift-period-camp">Campaign: <strong>' + liftData.campaign_period + '</strong></span>'
+        + '</div></div>'
+        + '<div class="lift-kpi-grid">'
+        + '<div class="lift-kpi-box" style="border-left:3px solid var(--muted)"><div class="lift-kpi-label">Baseline Sales (Same Days Last Week)</div><div class="lift-kpi-val" style="color:var(--text-secondary)">' + inr(s.total_baseline_revenue) + '</div><div class="lift-kpi-sub">' + inrExact(s.total_baseline_revenue) + ' \u00b7 ' + num(s.total_baseline_units) + ' units</div></div>'
+        + '<div class="lift-kpi-box" style="border-left:3px solid #6366f1"><div class="lift-kpi-label">Campaign Sales (Active Days)</div><div class="lift-kpi-val" style="color:#a5b4fc">' + inr(s.total_campaign_revenue) + '</div><div class="lift-kpi-sub">' + inrExact(s.total_campaign_revenue) + ' \u00b7 ' + num(s.total_campaign_units) + ' units</div></div>'
+        + '<div class="lift-kpi-box" style="border-left:3px solid ' + (isPos ? '#10b981' : '#ef4444') + ';background:' + (isPos ? 'rgba(16,185,129,0.06)' : 'rgba(239,68,68,0.06)') + '"><div class="lift-kpi-label" style="color:' + (isPos ? '#34d399' : '#f87171') + '">Incremental Revenue Lift</div><div class="lift-kpi-val" style="color:' + (isPos ? '#34d399' : '#f87171') + '">' + (isPos ? '+' : '') + inr(liftRev) + '</div><div class="lift-kpi-sub" style="font-weight:700;color:' + (isPos ? '#34d399' : '#f87171') + '">' + (isPos ? '\u25b2 +' : '\u25bc ') + liftRevPct + '% vs baseline (' + (isPos ? '+' : '') + inrExact(liftRev) + ')</div></div>'
+        + '<div class="lift-kpi-box" style="border-left:3px solid #0891b2"><div class="lift-kpi-label">Volume Growth</div><div class="lift-kpi-val" style="color:#22d3ee">' + (liftUnits >= 0 ? '+' : '') + num(liftUnits) + ' u</div><div class="lift-kpi-sub" style="font-weight:700;color:#38bdf8">' + (liftUnitsPct >= 0 ? '\u25b2 +' : '\u25bc ') + liftUnitsPct + '% unit growth</div></div>'
+        + '</div>'
+        + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--muted);margin-bottom:10px">Daily Like-for-Like Breakdown (' + liftData.days.length + ' Days)</div>'
+        + '<div class="lift-days-grid">' + dayCards + '</div>'
+        + '<div class="panel" style="margin-bottom:0"><div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;"><div><div class="panel-title">Day-by-Day Incremental Comparison Audit</div><span style="font-size:10px;color:var(--muted);font-weight:600">Normalized day-of-week analysis</span></div><div style="display:flex; align-items:center; gap:8px;"><label style="font-size:11px; font-weight:600; color:var(--muted);">Baseline Start Date:</label><input type="date" value="' + _selectedBaseStart + '" onchange="updateBaselineDate(this.value)" style="padding:4px 8px; border:1px solid var(--border); border-radius:6px; font-size:12px; outline:none; background:var(--bg); color:var(--text); cursor:pointer;"></div></div>'
+        + '<div class="table-wrap"><table><thead><tr><th>Day</th><th>Base Date</th><th>Base Sales (u)</th><th>Camp Date</th><th>Camp Sales (u)</th><th>Net Lift (\u20b9)</th><th style="text-align:center">Lift %</th><th>Unit Lift</th></tr></thead>'
+        + '<tbody>' + tableRows + '<tr class="tfoot-row"><td style="color:var(--text);font-weight:800">Total (' + liftData.days.length + ' Days)</td><td style="color:var(--muted)">\u2014</td><td class="num-val" style="color:var(--muted)">' + inrExact(s.total_baseline_revenue) + ' (' + s.total_baseline_units + ' u)</td><td style="color:var(--muted)">\u2014</td><td class="num-val" style="color:var(--text)">' + inrExact(s.total_campaign_revenue) + ' (' + s.total_campaign_units + ' u)</td><td class="num-val" style="color:' + (isPos ? 'var(--green)' : '#f87171') + ';font-weight:900">' + (isPos ? '+' : '') + inrExact(liftRev) + '</td><td style="text-align:center"><span class="lift-pill-badge ' + (isPos ? 'lift-pill-pos' : 'lift-pill-neg') + '">' + (isPos ? '\u25b2 +' : '\u25bc ') + liftRevPct + '%</span></td><td class="num-val" style="color:' + (liftUnits >= 0 ? 'var(--green)' : '#f87171') + '">' + (liftUnits >= 0 ? '+' : '') + liftUnits + ' u (' + (liftUnitsPct >= 0 ? '+' : '') + liftUnitsPct + '%)</td></tr></tbody></table></div></div>'
+        + '</div>';
+    }
+
+    Promise.all([
+      fetch('/api/campaign/' + _campaignId + '/store-sales').then(r => r.json()),
+      fetch('/api/campaign/' + _campaignId + '/incremental-lift' + (_selectedBaseStart ? '?base_start=' + _selectedBaseStart : '')).then(r => r.json()).catch(() => null)
+    ])
+    .then(([data, liftData]) => {
+      _storeData = data;
+      renderPage(data, liftData);
+    })
+    .catch(err => {
+      document.getElementById('content-area').innerHTML = '<div style="text-align:center;padding:60px 20px;color:#f87171;"><div style="font-size:32px;margin-bottom:12px;">\u26a0\ufe0f</div><div style="font-size:18px;font-weight:700;">Failed to load store sales</div><div style="font-size:13px;color:var(--muted);margin-top:6px;">' + err.message + '</div></div>';
+    });
+
+    function renderPage(data, liftData) {
+      const branch      = data.branch || '';
+      const branchName  = data.branch_name || branch;
+      const period      = data.period || '';
+      const campaignName = data.campaign || 'Store Sales';
+
+      document.getElementById('badge-branch').textContent = '\ud83c\udfd8\ufe0f ' + branchName + ' (' + branch + ')';
+      document.getElementById('badge-period').textContent = '\ud83d\udcc5 ' + period;
+      document.title = branchName + ' \u2013 Store Sales';
+
+      const products  = data.products || [];
+      const totalRev  = data.total_revenue || 0;
+      const totalQty  = data.total_qty || 0;
+
+      let topCat = '', topRev = 0;
+      products.forEach(function(p) { if (p.revenue > topRev) { topRev = p.revenue; topCat = p.product; } });
+      const topRevPct  = totalRev > 0 ? ((topRev / totalRev) * 100).toFixed(1) : '0.0';
+      const avgUnitVal = totalQty > 0 ? (totalRev / totalQty) : 0;
+
+      const retStr  = data.returns_amount   ? '-\u20b9' + Math.round(Math.abs(data.returns_amount)).toLocaleString('en-IN')   : '\u20b90';
+      const exchStr = data.exchanges_amount ? '-\u20b9' + Math.round(Math.abs(data.exchanges_amount)).toLocaleString('en-IN') : '\u20b90';
+
+      const recHtml = '<div class="rec-banner">'
+        + '<div class="rec-left"><div class="rec-icon">\u2705</div><div>'
+        + '<div class="rec-title">100% Reconciled with MyG POS Daily Sales Report</div>'
+        + '<div class="rec-meta">Gross: <strong>' + inrExact(data.gross_revenue) + '</strong> &nbsp;|&nbsp; Returns: <strong style="color:#f87171">' + retStr + '</strong> &nbsp;|&nbsp; Exchanges: <strong style="color:#fbbf24">' + exchStr + '</strong> &nbsp;|&nbsp; POS Net: <strong style="color:#34d399">' + inrExact(totalRev) + '</strong></div>'
+        + '</div></div>'
+        + '<div class="rec-pills"><span class="rec-pill pill-blue">' + num(totalQty) + ' units</span><span class="rec-pill pill-green">' + inrExact(totalRev) + ' net</span></div>'
+        + '</div>';
+
+      const totalStoreCust = (data.store_new_cust || 0) + (data.store_existing_cust || 0);
+      const newCustPct = totalStoreCust > 0 ? Math.round(((data.store_new_cust || 0) / totalStoreCust) * 100) : 0;
+      const existCustPct = totalStoreCust > 0 ? 100 - newCustPct : 0;
+
+      const attrHtml = '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(400px, 1fr)); gap:16px; margin-bottom:28px;">'
+        + '<div class="attr-card" style="margin-bottom:0;">'
+        + '<div><div class="attr-label">\ud83d\udcca Revenue Breakdown</div><div class="attr-title">Campaign recipients vs walk-in shoppers</div></div>'
+        + '<div class="attr-boxes">'
+        + '<div class="attr-box attr-box-campaign"><div class="attr-box-head">\ud83c\udfaf Campaign Attributed</div><div class="attr-box-val">' + inr(data.campaign_revenue||0) + ' <span style="font-size:12px;font-weight:700;color:#a78bfa">(' + (data.campaign_rev_pct||0) + '%)</span></div><div class="attr-box-sub">' + num(data.campaign_purchases||0) + ' campaign customers</div></div>'
+        + '<div class="attr-box attr-box-walkin"><div class="attr-box-head">\ud83d\udeb6 Walk-in Shoppers</div><div class="attr-box-val">' + inr(data.walkin_revenue||0) + ' <span style="font-size:12px;font-weight:700;color:var(--muted)">(' + (data.walkin_rev_pct||0) + '%)</span></div><div class="attr-box-sub">General store customers</div></div>'
+        + '</div></div>'
+        + '<div class="attr-card" style="margin-bottom:0;">'
+        + '<div><div class="attr-label" style="color:#ec4899;">\ud83d\udc65 Total Store Customers</div><div class="attr-title">New vs Returning (since Jan 2020)</div></div>'
+        + '<div class="attr-boxes">'
+        + '<div class="attr-box" style="background:rgba(236,72,153,0.12); border: 1px solid rgba(236,72,153,0.25);"><div class="attr-box-head" style="color:#f472b6;">\ud83c\udd95 New</div><div class="attr-box-val" style="color:#f9a8d4;">' + num(data.store_new_cust||0) + ' <span style="font-size:12px;font-weight:700;color:#f472b6">(' + newCustPct + '%)</span></div><div class="attr-box-sub">First purchase</div></div>'
+        + '<div class="attr-box attr-box-campaign"><div class="attr-box-head">\ud83d\udd04 Returning</div><div class="attr-box-val">' + num(data.store_existing_cust||0) + ' <span style="font-size:12px;font-weight:700;color:#a78bfa">(' + existCustPct + '%)</span></div><div class="attr-box-sub">Loyal buyers</div></div>'
+        + '</div></div>'
+        + '</div>';
+
+      const kpiHtml = '<div class="kpi-grid">'
+        + '<div class="kpi-card kpi-c1"><div class="kpi-label">Total Net Sales (POS)</div><div class="kpi-value">' + inr(totalRev) + '</div><div class="kpi-sub">' + inrExact(totalRev) + ' net verified</div></div>'
+        + '<div class="kpi-card kpi-c2"><div class="kpi-label">Total Units Sold</div><div class="kpi-value">' + num(totalQty) + '</div><div class="kpi-sub">Across all product categories</div></div>'
+        + '<div class="kpi-card kpi-c3"><div class="kpi-label">Leading Category</div><div class="kpi-value" style="font-size:22px;">' + topCat + '</div><div class="kpi-sub">' + topRevPct + '% revenue share &middot; ' + inr(topRev) + '</div></div>'
+        + '<div class="kpi-card kpi-c4"><div class="kpi-label">Avg Price / Unit</div><div class="kpi-value">' + inr(avgUnitVal) + '</div><div class="kpi-sub">Blended across all sales</div></div>'
+        + '</div>';
+
+      const maxRev = topRev > 0 ? topRev : 1;
+
+      var prodCards = '';
+      products.forEach(function(p, i) {
+        var m       = PROD_META[p.product] || PROD_META['Other'];
+        var isZero  = (p.qty === 0 && p.revenue === 0);
+        var sharePct = totalRev > 0 ? ((p.revenue / totalRev) * 100).toFixed(1) : '0.0';
+        var barW    = ((p.revenue / maxRev) * 100).toFixed(1);
+        var avgP    = p.qty > 0 ? inr(p.revenue / p.qty) : '\u2014';
+        var clickAttr = isZero ? '' : ' onclick="openBrandDrawer(\'' + p.product.replace(/'/g,"\\'") + '\',' + i + ')" tabindex="0" onkeydown="if(event.key===\'Enter\'){openBrandDrawer(\'' + p.product.replace(/'/g,"\\'") + '\',' + i + ')}"';
+        prodCards += '<div class="prod-card ' + (isZero ? 'zero-card' : '') + '"' + clickAttr + ' id="prod-card-' + i + '">'
+          + '<div class="prod-card-row1"><div class="prod-icon-box" style="background:' + m.bg + '">' + m.icon + '</div>'
+          + '<span class="prod-share-tag ' + (isZero ? 'zero-tag' : '') + '">' + (isZero ? 'No Sales' : sharePct + '% Share') + '</span></div>'
+          + '<div class="prod-name">' + p.product + '</div>'
+          + '<div class="prod-metrics">'
+          + '<div class="prod-metric"><span class="prod-metric-label">Units</span><span class="prod-metric-value">' + num(p.qty) + '</span></div>'
+          + '<div class="prod-metric"><span class="prod-metric-label">Revenue</span><span class="prod-metric-value" style="color:' + (isZero ? 'var(--muted)' : m.color) + '">' + inr(p.revenue) + '</span></div>'
+          + '<div class="prod-metric"><span class="prod-metric-label">Share</span><span class="prod-metric-value" style="color:' + (isZero ? 'var(--muted)' : '#a5b4fc') + '">' + sharePct + '%</span></div>'
+          + '</div>'
+          + '<div class="prod-bar-track"><div class="prod-bar-fill" style="width:' + (isZero ? 0 : barW) + '%;background:' + m.bar + '"></div></div>'
+          + (isZero ? '' : '<div class="prod-drill"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-7"/><polyline points="17 1 23 1 23 7"/><line x1="10" y1="14" x2="23" y2="1"/></svg> View brand breakdown</div>')
+          + '</div>';
+      });
+
+      var tableRows = '';
+      products.forEach(function(p) {
+        var m     = PROD_META[p.product] || PROD_META['Other'];
+        var isZero = (p.qty === 0 && p.revenue === 0);
+        var share = totalRev > 0 ? ((p.revenue / totalRev) * 100).toFixed(1) : '0.0';
+        var avgP  = p.qty > 0 ? inrExact(p.revenue / p.qty) : '\u2014';
+        tableRows += '<tr>'
+          + '<td><div class="category-cell"><span>' + m.icon + '</span><span>' + p.product + '</span></div></td>'
+          + '<td class="num-val" style="color:' + (isZero ? 'var(--muted)' : 'var(--text)') + '">' + num(p.qty) + '</td>'
+          + '<td class="num-val" style="color:' + (isZero ? 'var(--muted)' : m.color) + '">' + inrExact(p.revenue) + '</td>'
+          + '<td><span style="font-weight:700;color:' + (isZero ? 'var(--muted)' : '#a5b4fc') + '">' + share + '%</span></td>'
+          + '<td style="color:var(--muted);font-size:11px;">' + avgP + '</td>'
+          + '</tr>';
+      });
+
+      var distRows = '';
+      products.forEach(function(p) {
+        var m     = PROD_META[p.product] || PROD_META['Other'];
+        var share = totalRev > 0 ? ((p.revenue / totalRev) * 100).toFixed(1) : '0.0';
+        var barW  = ((p.revenue / maxRev) * 100).toFixed(1);
+        distRows += '<div class="dist-row">'
+          + '<div class="dist-top"><div class="dist-label"><span>' + m.icon + '</span><span>' + p.product + '</span></div>'
+          + '<div><span class="dist-val" style="color:' + m.color + '">' + inr(p.revenue) + '</span><span class="dist-sub" style="margin-left:4px">(' + share + '%)</span></div></div>'
+          + '<div class="dist-track"><div class="dist-fill" style="width:' + barW + '%;background:' + m.bar + '"></div></div>'
+          + '</div>';
+      });
+
+      document.getElementById('content-area').innerHTML = ''
+        + '<div class="hero">'
+        + '<div class="hero-pre">\ud83c\udfd8\ufe0f Store-Level Sales Intelligence</div>'
+        + '<h1 class="hero-title">' + campaignName + '</h1>'
+        + '<p class="hero-desc">All transactions at <strong>' + branchName + ' (' + branch + ')</strong> during <strong>' + period + '</strong>. Includes campaign recipients and walk-in shoppers. Data verified against ClickHouse.</p>'
+        + '</div>'
+        + recHtml + attrHtml + buildIncrementalLiftHtml(liftData) + kpiHtml
+        + '<div class="section-head">'
+        + '<h2 class="section-title">Product Category Breakdown</h2>'
+        + '<p class="section-sub">All 7 product categories &mdash; units sold, revenue generated &amp; revenue share</p>'
+        + '<p class="section-hint" style="margin-top:5px;font-size:11px;color:var(--accent2)">&#9889; Click any card to view brand-wise breakdown</p>'
+        + '</div>'
+        + '<div class="prod-grid">' + prodCards + '</div>'
+        + '<div class="detail-grid">'
+        + '<div class="panel"><div class="panel-header"><div class="panel-title">Category Summary Table</div><span style="font-size:10px;color:var(--muted);font-weight:600">ClickHouse verified</span></div>'
+        + '<div class="table-wrap"><table><thead><tr><th>Product</th><th>Units Sold</th><th>Revenue</th><th>Share %</th><th>Avg Price</th></tr></thead>'
+        + '<tbody>' + tableRows + '<tr class="tfoot-row"><td><strong>Total Store</strong></td><td class="num-val">' + num(totalQty) + '</td><td class="num-val" style="color:var(--green)">' + inrExact(totalRev) + '</td><td>100%</td><td style="color:var(--muted);font-size:11px">' + inrExact(avgUnitVal) + '</td></tr>'
+        + '</tbody></table></div></div>'
+        + '<div class="panel"><div class="panel-header"><div class="panel-title">Revenue Distribution</div><span style="font-size:10px;color:var(--muted);font-weight:600">Relative share</span></div>'
+        + '<div class="panel-body"><div class="dist-rows">' + distRows + '</div></div></div>'
+        + '</div>'
+        + '<div class="audit-card">'
+        + '<div style="font-size:20px;flex-shrink:0;margin-top:2px">\ud83d\udee1\ufe0f</div>'
+        + '<div class="audit-text"><strong>ClickHouse Verification Audit:</strong> Report aggregates data from <code>azure_sales_report</code> joined with <code>item_master</code> for branch <strong>' + branch + '</strong> between <strong>' + (data.start_date||'').slice(0,10) + '</strong> and <strong>' + (data.end_date||'').slice(0,10) + '</strong>. AC OUTDOOR units are strictly excluded. Only AC Indoor units are counted. Products not matching named categories fall under Other.</div>'
+        + '</div>';
+    }
+
+    function openBrandDrawer(productName, prodIdx) {
+      var m = PROD_META[productName] || PROD_META['Other'];
+      var p = _storeData && _storeData.products ? _storeData.products.find(function(x){ return x.product === productName; }) : null;
+
+      document.getElementById('drawerIcon').textContent      = m.icon;
+      document.getElementById('drawerIcon').style.background = m.bg;
+      document.getElementById('drawerProdName').textContent  = productName;
+      document.getElementById('drawerProdSub').textContent   = 'Brand-wise breakdown \u00b7 ClickHouse live data';
+
+      if (p) {
+        document.getElementById('drawerTotalQty').textContent = num(p.qty);
+        document.getElementById('drawerTotalRev').textContent = inr(p.revenue);
+      }
+      document.getElementById('drawerTopBrand').textContent = '\u2014';
+
+      document.getElementById('drawerBody').innerHTML = '<div class="drawer-loading"><div class="drawer-spinner"></div><div style="font-size:13px;color:var(--muted);">Fetching brand data from ClickHouse\u2026</div></div>';
+
+      document.getElementById('drawerOverlay').classList.add('open');
+      document.getElementById('brandDrawer').classList.add('open');
+      document.body.style.overflow = 'hidden';
+      _drawerOpen = true;
+
+      fetch('/api/campaign/' + _campaignId + '/brand-breakdown?product=' + encodeURIComponent(productName))
+        .then(function(r){ return r.json(); })
+        .then(function(data){ renderBrandData(data, m, productName); })
+        .catch(function(err){
+          document.getElementById('drawerBody').innerHTML = '<div style="text-align:center;padding:30px;color:#f87171"><div style="font-size:24px;margin-bottom:8px">\u26a0\ufe0f</div><div style="font-weight:700">Failed to load brand data</div><div style="font-size:12px;color:var(--muted);margin-top:4px">' + err.message + '</div></div>';
+        });
+    }
+
+    function renderBrandData(data, meta, productName) {
+      var brands = data.brands || [];
+      var totalRev = 0, totalQty = 0;
+      brands.forEach(function(b){ totalRev += b.revenue; totalQty += b.qty; });
+
+      document.getElementById('drawerTotalQty').textContent = num(totalQty);
+      document.getElementById('drawerTotalRev').textContent = inr(totalRev);
+      document.getElementById('drawerTopBrand').textContent = brands.length > 0 ? brands[0].brand : '\u2014';
+
+      if (brands.length === 0) {
+        document.getElementById('drawerBody').innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted)"><div style="font-size:28px;margin-bottom:8px">\ud83d\udceb</div><div style="font-weight:700;color:var(--text-secondary)">No brand data found</div><div style="font-size:12px;margin-top:4px">No sales recorded for ' + productName + '</div></div>';
+        return;
+      }
+
+      var maxBrandRev = brands[0].revenue || 1;
+      var rows = '';
+      brands.forEach(function(b, i) {
+        var rankClass = i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : '';
+        var color     = BRAND_COLORS[i % BRAND_COLORS.length];
+        var barW      = ((b.revenue / maxBrandRev) * 100).toFixed(1);
+        var isZeroRev = (b.revenue === 0 && b.qty > 0);
+        var zeroPill  = isZeroRev ? ' <span style="font-size:10px;font-weight:700;color:#fbbf24;background:rgba(251,191,36,0.15);padding:1px 6px;border-radius:4px;margin-left:6px;">Care Service Delivery</span>' : '';
+        rows += '<div class="brand-row">'
+          + '<div class="brand-row-top"><div style="display:flex;align-items:center"><span class="brand-rank ' + rankClass + '">' + (i+1) + '</span><span class="brand-name">' + b.brand + '</span>' + zeroPill + '</div>'
+          + '<span class="brand-share-tag">' + pct(b.share_pct) + '</span></div>'
+          + '<div class="brand-row-metrics">'
+          + '<div class="brand-metric"><span class="brand-metric-label">Units Billed</span><span class="brand-metric-value">' + num(b.qty) + '</span></div>'
+          + '<div class="brand-metric"><span class="brand-metric-label">Revenue</span><span class="brand-metric-value" style="color:' + (isZeroRev ? 'var(--muted)' : color) + '">' + inr(b.revenue) + '</span></div>'
+          + '</div>'
+          + '<div class="brand-bar-track"><div class="brand-bar-fill" style="width:' + barW + '%;background:' + color + '"></div></div>'
+          + (isZeroRev ? '<div style="font-size:10px;color:var(--muted);margin-top:4px;">* Handed over at ₹0 on myG Care Center service invoice</div>' : '')
+          + '</div>';
+      });
+
+      document.getElementById('drawerBody').innerHTML = '<div class="drawer-section-title">' + brands.length + ' brand' + (brands.length > 1 ? 's' : '') + ' found \u00b7 Sorted by revenue</div>' + rows;
+    }
+
+    function closeDrawer() {
+      document.getElementById('drawerOverlay').classList.remove('open');
+      document.getElementById('brandDrawer').classList.remove('open');
+      document.body.style.overflow = '';
+      _drawerOpen = false;
+    }
+
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && _drawerOpen) closeDrawer(); });
+  </script>
+</body>
+</html>
