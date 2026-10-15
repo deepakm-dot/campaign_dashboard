@@ -86,7 +86,66 @@ def init_db():
         value TEXT
     )''')
     conn.commit()
-    conn.close()
+
+    # Auto-seed verified ClickHouse campaign metrics if DB is fresh / unpopulated (e.g. on Render deploy)
+    try:
+        c.execute("SELECT count(*), coalesce(sum(purchase_value), 0) FROM campaigns")
+        row = c.fetchone()
+        c_count = row[0] if row else 0
+        c_val = float(row[1] or 0)
+        seed_file = os.path.join(BASE_DIR, 'seed_campaigns.json')
+        if (c_count == 0 or c_val <= 0) and os.path.exists(seed_file):
+            print(f"[SEED] Initializing campaigns from {seed_file} (current DB count={c_count}, revenue=₹{c_val:,.2f})...")
+            with open(seed_file, 'r', encoding='utf-8') as f:
+                seed_data = json.load(f)
+            cols = [
+                'id', 'campaign_name', 'type', 'start_date', 'end_date',
+                'target_size', 'purchase_count', 'purchase_value', 'conversion_rate',
+                'roi', 'budget', 'source', 'campaign_group', 'data_source',
+                'top_brands', 'top_categories', 'branch_code', 'new_customers',
+                'existing_customers', 'sl_no', 'sheet_tab'
+            ]
+            for r in seed_data:
+                existing = None
+                if r.get('id'):
+                    existing = c.execute("SELECT id, purchase_value FROM campaigns WHERE id=?", (r['id'],)).fetchone()
+                if not existing and r.get('sl_no') and r.get('sheet_tab'):
+                    existing = c.execute("SELECT id, purchase_value FROM campaigns WHERE sl_no=? AND sheet_tab=?", (r['sl_no'], r['sheet_tab'])).fetchone()
+                
+                if not existing:
+                    vals = [r.get(col, 0 if ('count' in col or 'size' in col or 'customers' in col or 'sl_no' in col) else ('[]' if 'top_' in col else '')) for col in cols]
+                    c.execute(f"INSERT INTO campaigns ({','.join(cols)}) VALUES ({','.join(['?']*len(cols))})", vals)
+                else:
+                    if float(existing['purchase_value'] or 0) <= 0:
+                        c.execute("""UPDATE campaigns SET
+                            purchase_count = ?,
+                            purchase_value = ?,
+                            conversion_rate = ?,
+                            roi = ?,
+                            new_customers = ?,
+                            existing_customers = ?,
+                            top_brands = ?,
+                            top_categories = ?,
+                            branch_code = COALESCE(NULLIF(branch_code, ''), ?)
+                            WHERE id = ?""", (
+                            r.get('purchase_count', 0),
+                            r.get('purchase_value', 0.0),
+                            r.get('conversion_rate', 0.0),
+                            r.get('roi', 0.0),
+                            r.get('new_customers', 0),
+                            r.get('existing_customers', 0),
+                            r.get('top_brands', '[]'),
+                            r.get('top_categories', '[]'),
+                            r.get('branch_code', ''),
+                            existing['id']
+                        ))
+            c.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('total_audience_reached', '14547880')")
+            conn.commit()
+            print(f"[SEED SUCCESS] Populated {len(seed_data)} campaigns with verified ClickHouse data.")
+    except Exception as e_seed:
+        print(f"[SEED ERROR] Failed to seed database: {e_seed}")
+    finally:
+        conn.close()
 
 # Ensure DB exists
 init_db()
@@ -327,21 +386,23 @@ def _sync_campaign_master():
                 if b_code:
                     c.execute("UPDATE campaigns SET branch_code=? WHERE id=?", (b_code, existing['id']))
                     
-                # If data_source changed to a new source, clear customers to force re-ingestion
-                if existing['data_source'] and existing['data_source'] != data_source:
-                    print(f"[{camp_name}] Data source changed ({existing['data_source']} -> {data_source}). Dropping old customers.")
-                    c.execute("DELETE FROM campaign_customers WHERE campaign_id=?", (existing['id'],))
-                    c.execute("""UPDATE campaigns 
-                                 SET purchase_count=0, purchase_value=0.0, conversion_rate=0.0, roi=0.0,
-                                     new_customers=0, existing_customers=0
-                                 WHERE id=?""", (existing['id'],))
-                elif date_changed:
-                    # If date changed, reset KPIs so fixkpi.py recalculates for the new date window
-                    print(f"[{camp_name}] Dates updated to {start_date} -> {end_date}. Triggering re-attribution.")
-                    c.execute("""UPDATE campaigns 
-                                 SET purchase_count=0, purchase_value=0.0, conversion_rate=0.0, roi=0.0,
-                                     new_customers=0, existing_customers=0
-                                 WHERE id=?""", (existing['id'],))
+                # Only trigger customer drop / re-attribution if this campaign has ingested customers
+                cust_cnt = c.execute("SELECT count(*) FROM campaign_customers WHERE campaign_id=?", (existing['id'],)).fetchone()[0]
+                if cust_cnt > 0:
+                    if existing['data_source'] and existing['data_source'].strip().lower() != data_source.strip().lower():
+                        print(f"[{camp_name}] Data source changed ({existing['data_source']} -> {data_source}). Dropping old customers.")
+                        c.execute("DELETE FROM campaign_customers WHERE campaign_id=?", (existing['id'],))
+                        c.execute("""UPDATE campaigns 
+                                     SET purchase_count=0, purchase_value=0.0, conversion_rate=0.0, roi=0.0,
+                                         new_customers=0, existing_customers=0
+                                     WHERE id=?""", (existing['id'],))
+                    elif date_changed:
+                        # If date changed, reset KPIs so fixkpi.py recalculates for the new date window
+                        print(f"[{camp_name}] Dates updated to {start_date} -> {end_date}. Triggering re-attribution.")
+                        c.execute("""UPDATE campaigns 
+                                     SET purchase_count=0, purchase_value=0.0, conversion_rate=0.0, roi=0.0,
+                                         new_customers=0, existing_customers=0
+                                     WHERE id=?""", (existing['id'],))
             else:
                 c.execute("""
                     INSERT INTO campaigns
@@ -382,20 +443,83 @@ CH_URL = "https://pdhsuv47ec.ap-south-1.aws.clickhouse.cloud:8443/"
 CH_USER = "default"
 CH_PASS = "ZFlujj9SA_Iei"
 
+_LAST_CH_ERROR = None
+
 def query_clickhouse(query):
+    global _LAST_CH_ERROR
     req = urllib.request.Request(CH_URL)
     base64string = base64.b64encode(f"{CH_USER}:{CH_PASS}".encode('ascii')).decode('ascii')
     req.add_header('Authorization', 'Basic ' + base64string)
     req.add_header('Content-Type', 'text/plain')
+    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) CampaignDashboard/1.0')
     full_query = query + " FORMAT JSON"
     req.data = full_query.encode('utf-8')
     try:
-        response = urllib.request.urlopen(req)
-        response_data = response.read().decode('utf-8')
-        return json.loads(response_data).get('data', [])
-    except Exception as e:
-        print("ClickHouse Error:", e)
+        with urllib.request.urlopen(req, timeout=25) as response:
+            response_data = response.read().decode('utf-8')
+            _LAST_CH_ERROR = None
+            return json.loads(response_data).get('data', [])
+    except urllib.error.HTTPError as e:
+        err_body = ""
+        try:
+            err_body = e.read().decode('utf-8', errors='ignore')
+        except:
+            pass
+        _LAST_CH_ERROR = f"HTTP {e.code}: {e.reason} ({err_body.strip()})"
+        print(f"[CLICKHOUSE HTTP ERROR] {_LAST_CH_ERROR}")
         return []
+    except Exception as e:
+        _LAST_CH_ERROR = str(e)
+        print(f"[CLICKHOUSE ERROR] {e}")
+        return []
+
+@app.route('/api/clickhouse/status', method='GET')
+def api_clickhouse_status():
+    """Diagnostic endpoint to verify ClickHouse Cloud connectivity from Render."""
+    import time
+    t0 = time.time()
+    try:
+        test_query = "SELECT 1 as ok, version() as ch_version FORMAT JSON"
+        req = urllib.request.Request(CH_URL)
+        base64string = base64.b64encode(f"{CH_USER}:{CH_PASS}".encode('ascii')).decode('ascii')
+        req.add_header('Authorization', 'Basic ' + base64string)
+        req.add_header('Content-Type', 'text/plain')
+        req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) CampaignDashboard/1.0')
+        req.data = test_query.encode('utf-8')
+        
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            elapsed = round((time.time() - t0) * 1000, 2)
+            return {
+                "status": "connected",
+                "host": "pdhsuv47ec.ap-south-1.aws.clickhouse.cloud",
+                "response_time_ms": elapsed,
+                "version": data.get('data', [{}])[0].get('ch_version', 'unknown'),
+                "message": "ClickHouse Cloud is connected and responding!"
+            }
+    except urllib.error.HTTPError as e:
+        elapsed = round((time.time() - t0) * 1000, 2)
+        err_body = ""
+        try:
+            err_body = e.read().decode('utf-8', errors='ignore')
+        except:
+            pass
+        return {
+            "status": "blocked",
+            "code": e.code,
+            "reason": str(e.reason),
+            "body": err_body,
+            "elapsed_ms": elapsed,
+            "hint": "ClickHouse Cloud IP Access List is blocking Render. Go to ClickHouse Cloud Console -> Security -> IP Access List -> Add 0.0.0.0/0 (Anywhere)."
+        }
+    except Exception as e:
+        elapsed = round((time.time() - t0) * 1000, 2)
+        return {
+            "status": "connection_error",
+            "error": str(e),
+            "elapsed_ms": elapsed,
+            "hint": "Could not connect to ClickHouse Cloud. Check if 0.0.0.0/0 is whitelisted in ClickHouse Cloud Console."
+        }
 
 def calculate_kpis_for_campaign(c, campaign_id, start_date, end_date, budget):
     from datetime import datetime, timedelta
@@ -1057,6 +1181,7 @@ def get_campaign_store_sales(campaign_id):
             'conversion_rate':    camp.get('conversion_rate'),
             'roi':                camp.get('roi'),
             'budget':             camp.get('budget'),
+            'clickhouse_error':   _LAST_CH_ERROR,
             'pos_reconciliation': {
                 'pos_net_sales':    pos_net_sales,
                 'pos_total_qty':    pos_total_qty,
