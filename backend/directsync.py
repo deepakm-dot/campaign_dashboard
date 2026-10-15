@@ -9,7 +9,9 @@ from datetime import datetime
 # Force unbuffered output
 sys.stdout.reconfigure(line_buffering=True)
 
-DB_FILE = 'campaign_dashboard.db'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(BASE_DIR)
+DB_FILE = os.environ.get('DB_FILE', os.path.join(ROOT_DIR, 'campaign_dashboard.db'))
 DRIVE_URL = "https://script.google.com/macros/s/AKfycbx8RQoxU-Js-kQuY7cs90K7Rc1-pDUxq7OzLM1Oj9G5q2Kw5otr-gsJI66f_lJ1KXJCSQ/exec"
 
 NOISE = {'and','the','for','with','sale','rcs','sms','wtsp','whatsapp',

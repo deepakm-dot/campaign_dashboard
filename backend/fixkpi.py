@@ -5,7 +5,10 @@ then re-run KPI calculation so the dashboard shows correct Audience Reached.
 import sqlite3, json, urllib.request, base64, re, sys
 sys.stdout.reconfigure(line_buffering=True)
 
-DB_FILE = 'campaign_dashboard.db'
+import os
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(BASE_DIR)
+DB_FILE = os.environ.get('DB_FILE', os.path.join(ROOT_DIR, 'campaign_dashboard.db'))
 SHEETS_URL = "https://script.google.com/macros/s/AKfycbwLu3feQq0BCxUFFxpUhamKLfNa5njxmJLZ4yBRY9pmPtsgBIXEFSzeVADBt5hlG9Y_DQ/exec"
 CH_URL  = "https://pdhsuv47ec.ap-south-1.aws.clickhouse.cloud:8443/"
 CH_USER = "default"

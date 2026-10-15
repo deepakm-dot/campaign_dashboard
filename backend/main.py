@@ -11,7 +11,9 @@ from bottle import Bottle, request, response, run
 from openpyxl import load_workbook
 
 app = Bottle()
-DB_FILE = 'campaign_dashboard.db'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(BASE_DIR)
+DB_FILE = os.environ.get('DB_FILE', os.path.join(ROOT_DIR, 'campaign_dashboard.db'))
 
 def get_db():
     conn = sqlite3.connect(DB_FILE, timeout=30)
@@ -1746,10 +1748,19 @@ class ThreadedWSGIRefServer(ServerAdapter):
                              handler_class=WSGIRequestHandler)
         server.serve_forever()
 
+_SYNC_THREAD_STARTED = False
+def _start_sync_thread():
+    global _SYNC_THREAD_STARTED
+    if not _SYNC_THREAD_STARTED and not os.environ.get('NO_SYNC_WORKER'):
+        _SYNC_THREAD_STARTED = True
+        sync_thread = threading.Thread(target=background_sync_worker, daemon=True)
+        sync_thread.start()
+
+# Automatically start background worker whether imported by gunicorn or run directly
+_start_sync_thread()
+
 if __name__ == '__main__':
-    # Start the background sync thread
-    sync_thread = threading.Thread(target=background_sync_worker, daemon=True)
-    sync_thread.start()
-    
-    server_adapter = ThreadedWSGIRefServer(host='0.0.0.0', port=8000)
+    port = int(os.environ.get('PORT', 8000))
+    print(f"Starting server on 0.0.0.0:{port}...")
+    server_adapter = ThreadedWSGIRefServer(host='0.0.0.0', port=port)
     run(app, server=server_adapter, debug=False, reloader=False)
