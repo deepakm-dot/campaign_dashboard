@@ -2,16 +2,19 @@
 Standalone direct sync — runs _sync_campaign_data logic directly in the main process.
 This bypasses threading/buffering to show real errors.
 """
-import os, io, csv, json, sqlite3, urllib.request, base64, re, sys
+import os, io, csv, json, urllib.request, base64, re, sys
 from openpyxl import load_workbook
 from datetime import datetime
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(BASE_DIR)
+sys.path.insert(0, BASE_DIR)
+import ch_db   # all campaign data lives in ClickHouse (no local database)
 
 # Force unbuffered output
 sys.stdout.reconfigure(line_buffering=True)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT_DIR = os.path.dirname(BASE_DIR)
-DB_FILE = os.environ.get('DB_FILE', os.path.join(ROOT_DIR, 'campaign_dashboard.db'))
+CUSTOMER_BATCH = 200_000   # rows per ClickHouse insert
 DRIVE_URL = "https://script.google.com/macros/s/AKfycbx8RQoxU-Js-kQuY7cs90K7Rc1-pDUxq7OzLM1Oj9G5q2Kw5otr-gsJI66f_lJ1KXJCSQ/exec"
 
 NOISE = {'and','the','for','with','sale','rcs','sms','wtsp','whatsapp',
@@ -102,14 +105,9 @@ def main():
                         local_candidates.append(os.path.join(search_dir, fname))
             except Exception: pass
 
-    # Step 2: Get campaigns from DB needing customer files
-    conn = sqlite3.connect(DB_FILE); conn.row_factory = sqlite3.Row; c = conn.cursor()
-    c.execute("""
-        SELECT id, campaign_name, type, start_date, data_source, budget, campaign_group
-        FROM campaigns 
-        WHERE id NOT IN (SELECT DISTINCT campaign_id FROM campaign_customers)
-    """)
-    campaigns = c.fetchall()
+    # Step 2: Get campaigns (from ClickHouse) that don't have customers yet
+    have_customers = ch_db.customer_counts()
+    campaigns = [r for r in ch_db.list_campaigns() if r['id'] not in have_customers]
     print(f"\n2. Processing {len(campaigns)} campaigns needing customer files...", flush=True)
 
     # Step 3: Skip deletion to preserve old data
@@ -227,9 +225,18 @@ def main():
             file_name = os.path.basename(local_matched_path).lower()
             print(f"\n   [{camp_id}] '{camp_name}' ({camp['type']}) → Local '{local_matched_path}'", flush=True)
 
-        # Parse customers with streaming/read_only=True
+        # Parse customers with streaming/read_only=True and bulk-insert into ClickHouse
         print(f"   Parsing...", flush=True)
         inserted = 0
+        batch = []
+
+        def flush_batch():
+            nonlocal inserted, batch
+            if batch:
+                ch_db.insert_customers(camp_id, batch)
+                inserted += len(batch)
+                batch = []
+
         try:
             is_xlsx = file_name.endswith('.xlsx') or file_name.endswith('.xls') or (content and content[:2] == b'PK')
             if is_xlsx:
@@ -238,24 +245,16 @@ def main():
                 for sheet_name in wb.sheetnames:
                     sheet = wb[sheet_name]
                     print(f"   Reading sheet '{sheet_name}'...", flush=True)
-                    batch = []
                     for row in sheet.iter_rows(values_only=True):
                         if not row or not any(row): continue
                         raw_cell = str(row[0] or '')
                         clean = re.sub(r'\D', '', raw_cell)
                         if len(clean) >= 10:
-                            mobile = clean[-10:]
-                            batch.append((camp_id, mobile, '', ''))
-                            if len(batch) >= 20000:
-                                c.executemany("INSERT INTO campaign_customers (campaign_id, customer_mobile, customer_name, store_name) VALUES (?,?,?,?)", batch)
-                                inserted += len(batch)
-                                batch = []
-                    if batch:
-                        c.executemany("INSERT INTO campaign_customers (campaign_id, customer_mobile, customer_name, store_name) VALUES (?,?,?,?)", batch)
-                        inserted += len(batch)
-                        batch = []
+                            batch.append(clean[-10:])
+                            if len(batch) >= CUSTOMER_BATCH:
+                                flush_batch()
+                    flush_batch()
             elif file_name.endswith('.csv'):
-                batch = []
                 if local_matched_path:
                     with open(local_matched_path, 'r', encoding='utf-8', errors='ignore') as f:
                         reader = csv.reader(f)
@@ -263,38 +262,34 @@ def main():
                             if not any(row): continue
                             clean = re.sub(r'\D', '', str(row[0] or ''))
                             if len(clean) >= 10:
-                                batch.append((camp_id, clean[-10:], '', ''))
-                                if len(batch) >= 20000:
-                                    c.executemany("INSERT INTO campaign_customers (campaign_id, customer_mobile, customer_name, store_name) VALUES (?,?,?,?)", batch)
-                                    inserted += len(batch)
-                                    batch = []
+                                batch.append(clean[-10:])
+                                if len(batch) >= CUSTOMER_BATCH:
+                                    flush_batch()
                 else:
                     reader = csv.reader(io.StringIO(content.decode('utf-8', errors='ignore')))
                     for row in reader:
                         if not any(row): continue
                         clean = re.sub(r'\D', '', str(row[0] or ''))
                         if len(clean) >= 10:
-                            batch.append((camp_id, clean[-10:], '', ''))
-                            if len(batch) >= 20000:
-                                c.executemany("INSERT INTO campaign_customers (campaign_id, customer_mobile, customer_name, store_name) VALUES (?,?,?,?)", batch)
-                                inserted += len(batch)
-                                batch = []
-                if batch:
-                    c.executemany("INSERT INTO campaign_customers (campaign_id, customer_mobile, customer_name, store_name) VALUES (?,?,?,?)", batch)
-                    inserted += len(batch)
-                    batch = []
+                            batch.append(clean[-10:])
+                            if len(batch) >= CUSTOMER_BATCH:
+                                flush_batch()
+                flush_batch()
         except Exception as e:
             import traceback
             print(f"   PARSE ERROR: {e}", flush=True)
             traceback.print_exc()
+            # Don't leave a half-loaded audience behind: it would hide this campaign from the next run
+            try:
+                ch_db.delete_customers(camp_id)
+            except Exception as e_del:
+                print(f"   CLEANUP ERROR: {e_del}", flush=True)
             continue
 
-        conn.commit()
-        print(f"   Inserted {inserted:,} customers for [{camp_id}] '{camp_name}'. Committed.", flush=True)
+        print(f"   Inserted {inserted:,} customers for [{camp_id}] '{camp_name}' into ClickHouse.", flush=True)
         processed += 1
 
     print(f"\n=== DONE: {processed} campaigns processed ===", flush=True)
-    conn.close()
 
 if __name__ == '__main__':
     main()

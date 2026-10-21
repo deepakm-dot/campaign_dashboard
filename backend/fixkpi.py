@@ -1,18 +1,27 @@
 """
 Fix target_size for current campaigns using SMS Delivered from Google Sheets,
 then re-run KPI calculation so the dashboard shows correct Audience Reached.
+
+All campaign data is read from / written to the ClickHouse campaign_dashboard_* tables
+(see ch_db.py). There is no local database.
 """
-import sqlite3, json, urllib.request, base64, re, sys
+import json, urllib.request, base64, re, sys
 sys.stdout.reconfigure(line_buffering=True)
 
 import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
-DB_FILE = os.environ.get('DB_FILE', os.path.join(ROOT_DIR, 'campaign_dashboard.db'))
+sys.path.insert(0, BASE_DIR)
+import ch_db
+
 SHEETS_URL = "https://script.google.com/macros/s/AKfycbwLu3feQq0BCxUFFxpUhamKLfNa5njxmJLZ4yBRY9pmPtsgBIXEFSzeVADBt5hlG9Y_DQ/exec"
-CH_URL  = os.environ.get('CH_URL', "https://pdhsuv47ec.ap-south-1.aws.clickhouse.cloud:8443/")
-CH_USER = os.environ.get('CH_USER', "default")
-CH_PASS = os.environ.get('CH_PASS', "ZFlujj9SA_Iei")
+CH_URL  = ch_db.CH_URL
+CH_USER = ch_db.CH_USER
+CH_PASS = ch_db.CH_PASS
+SRC = ch_db.SRC
+T_CAMP, T_CUST = ch_db.T_CAMP, ch_db.T_CUST
+
+
 def load_branch_map():
     import openpyxl, re
     branch_map = {}
@@ -35,13 +44,8 @@ def load_branch_map():
 BRANCH_MAP = load_branch_map()
 
 def query_clickhouse(sql):
-    req = urllib.request.Request(CH_URL)
-    req.add_header('Authorization', 'Basic ' + base64.b64encode(f"{CH_USER}:{CH_PASS}".encode()).decode())
-    req.add_header('Content-Type', 'text/plain')
-    req.data = (sql + " FORMAT JSON").encode()
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return json.loads(r.read().decode()).get('data', [])
+        return ch_db.query(sql, timeout=120)
     except Exception as e:
         print(f"  ClickHouse ERROR: {e}", flush=True); return []
 
@@ -74,45 +78,52 @@ def resolve_branch_dynamic(camp_name):
                 return br.get('code','')
     return ''
 
+def _differs(old, new):
+    """True when a stored value differs from the new one (floats compared with a tolerance)."""
+    if isinstance(new, float) or isinstance(old, float):
+        try:
+            return abs(float(old or 0) - float(new or 0)) > 1e-6
+        except Exception:
+            return True
+    return (old or '') != (new or '') if isinstance(new, str) else (old or 0) != (new or 0)
+
+def _update_if_changed(camp, fields):
+    """Run one ClickHouse UPDATE only for the fields that actually changed."""
+    changed = {k: v for k, v in fields.items() if _differs(camp.get(k), v)}
+    if changed:
+        ch_db.update_campaign(camp['id'], changed)
+        camp.update(changed)
+    return bool(changed)
+
 # Step 0: Re-link orphaned campaign_customers to current campaign IDs
 print("=== Step 0: Re-linking orphaned campaign_customers ===", flush=True)
-conn0 = sqlite3.connect(DB_FILE); conn0.row_factory = sqlite3.Row; c0 = conn0.cursor()
 
 # Find all campaign_ids in campaign_customers that no longer exist in campaigns
-c0.execute("""
-    SELECT DISTINCT cc.campaign_id
-    FROM campaign_customers cc
-    LEFT JOIN campaigns camp ON camp.id = cc.campaign_id
-    WHERE camp.id IS NULL
-""")
-orphan_ids = [r['campaign_id'] for r in c0.fetchall()]
+orphan_ids = [int(r['campaign_id']) for r in ch_db.query(
+    f"SELECT DISTINCT campaign_id FROM {T_CUST} "
+    f"WHERE source_db = '{SRC}' AND campaign_id NOT IN (SELECT id FROM {T_CAMP} WHERE source_db = '{SRC}')")]
 print(f"  Orphaned campaign_ids: {orphan_ids}", flush=True)
 
 for orphan_id in orphan_ids:
     # Get a sample customer row to find the store_name (used to identify campaign)
-    c0.execute("SELECT store_name FROM campaign_customers WHERE campaign_id=? LIMIT 1", (orphan_id,))
-    sample = c0.fetchone()
-    store = (sample['store_name'] or '').strip() if sample else ''
+    sample = ch_db.query(f"SELECT store_name FROM {T_CUST} WHERE source_db = '{SRC}' AND campaign_id = {orphan_id} LIMIT 1")
+    store = (sample[0]['store_name'] or '').strip() if sample else ''
     print(f"  Orphan {orphan_id}: store_name='{store}'", flush=True)
 
     # Find matching current campaign by store name keyword in campaign_name
     if store:
         keyword = store.split()[0].lower() if store else ''
-        c0.execute("SELECT id, campaign_name, type FROM campaigns WHERE LOWER(campaign_name) LIKE ?",
-                   (f'%{keyword}%',))
-        matches = c0.fetchall()
+        matches = [m for m in ch_db.list_campaigns() if keyword in (m.get('campaign_name') or '').lower()]
         if matches:
             # Pick first match
             new_id = matches[0]['id']
-            c0.execute("UPDATE campaign_customers SET campaign_id=? WHERE campaign_id=?", (new_id, orphan_id))
+            ch_db.execute(f"ALTER TABLE {T_CUST} UPDATE campaign_id = {int(new_id)} "
+                          f"WHERE source_db = '{SRC}' AND campaign_id = {orphan_id}")
             print(f"  -> Re-linked {orphan_id} -> {new_id} ({matches[0]['campaign_name']})", flush=True)
         else:
             print(f"  -> No match found for store '{store}'", flush=True)
     else:
         print(f"  -> No store_name to match on", flush=True)
-
-conn0.commit()
-conn0.close()
 
 # Step 1: Fetch SMS Delivered values from sheet
 print("\n=== Step 1: Fetching SMS Delivered from Google Sheets ===", flush=True)
@@ -140,10 +151,8 @@ for row in sheet_rows:
 
 # Step 2: Update target_size in campaigns table
 print("\n=== Step 2: Updating target_size in campaigns table ===", flush=True)
-conn = sqlite3.connect(DB_FILE); conn.row_factory = sqlite3.Row; c = conn.cursor()
-
-c.execute("SELECT id, campaign_name, type, data_source, campaign_group, sl_no, sheet_tab, target_size FROM campaigns")
-for camp in c.fetchall():
+all_camps = ch_db.list_campaigns()
+for camp in all_camps:
     delivered = 0
     if camp['sl_no'] and camp['sheet_tab']:
         delivered = sms_lookup.get((camp['sl_no'], camp['sheet_tab']), 0)
@@ -152,23 +161,13 @@ for camp in c.fetchall():
     if not delivered:
         delivered = sms_lookup.get((camp['campaign_name'].strip().lower(), camp['type'].strip().lower(), (camp['data_source'] or '').strip().lower()), 0)
     if delivered > 0:
-        c.execute("UPDATE campaigns SET target_size=? WHERE id=?", (delivered, camp['id']))
-        print(f"  [{camp['id']}] {camp['campaign_name']} | {camp['type']} → target_size={delivered}", flush=True)
-
-conn.commit()
+        if _update_if_changed(camp, {'target_size': int(delivered)}):
+            print(f"  [{camp['id']}] {camp['campaign_name']} | {camp['type']} → target_size={delivered}", flush=True)
 
 # Step 3: Re-run KPI calc for campaigns with customers
 print("\n=== Step 3: Re-calculating KPIs ===", flush=True)
-c.execute("""
-    SELECT camps.id, camps.campaign_name, camps.data_source, camps.type, camps.start_date, camps.end_date,
-           camps.budget, camps.branch_code, camps.target_size,
-           camps.purchase_count, camps.purchase_value, camps.new_customers, camps.existing_customers,
-           COUNT(cc.id) as cust_count
-    FROM campaigns camps
-    JOIN campaign_customers cc ON cc.campaign_id = camps.id
-    GROUP BY camps.id
-""")
-camps = c.fetchall()
+cust_counts = ch_db.customer_counts()
+camps = [cp for cp in all_camps if cust_counts.get(cp['id'], 0) > 0]
 print(f"Found {len(camps)} campaigns with customers.", flush=True)
 
 for camp in camps:
@@ -189,50 +188,42 @@ for camp in camps:
         conv_rate = (p_cnt / sms_delivered * 100) if sms_delivered > 0 else 0
         p_val = float(camp['purchase_value'] or 0)
         roi = (p_val / budget) if budget > 0 else 0
-        c.execute("UPDATE campaigns SET conversion_rate=?, roi=?, budget=?, target_size=? WHERE id=?",
-                  (conv_rate, roi, budget, sms_delivered, camp_id))
-        conn.commit()
+        _update_if_changed(camp, {'conversion_rate': float(conv_rate), 'roi': float(roi),
+                                  'budget': float(budget), 'target_size': int(sms_delivered)})
         print(f"[{camp_id}] {camp_name} is already processed. Updated conv/roi. Skipping heavy attribution...", flush=True)
         continue
 
     if not branch:
         branch = resolve_branch_dynamic(camp_name)
         if branch:
-            c.execute("UPDATE campaigns SET branch_code=? WHERE id=?", (branch, camp_id))
-            conn.commit()
+            _update_if_changed(camp, {'branch_code': branch})
 
     print(f"\n[{camp_id}] {camp_name} | {camp['type']} | {start_dt}→{end_dt} | branch={branch} | SMS Delivered={sms_delivered}", flush=True)
-
-    # Get mobiles
-    c.execute("SELECT customer_mobile FROM campaign_customers WHERE campaign_id=?", (camp_id,))
-    mobiles = [r[0] for r in c.fetchall() if r[0]]
 
     branch_cond = f"branch = '{branch}'"
     if "mavoor road" in camp_name.lower():
         branch_cond = "branch IN ('KIN', 'LAN', 'MAH', 'PCT', 'PUT', 'SBM', 'CAM')"
     branch_filter = f"AND {branch_cond}" if branch or "mavoor road" in camp_name.lower() else ""
 
-    # FAST INVERTED ATTRIBUTION ALGORITHM:
-    # Instead of sending hundreds of chunk queries of 10,000 numbers over HTTP (taking 15-20 minutes),
-    # fetch the store/state's purchasers in 1 single ClickHouse query (typically 500 to 28,000 customers, 1-2 sec),
-    # then match against SQLite's indexed campaign_customers table in <0.1 sec!
-    print(f"  Fetching store purchasers from ClickHouse ({start_dt} to {end_dt})...", flush=True)
+    # ATTRIBUTION: one ClickHouse query finds the store/state purchasers in the date window
+    # who are ALSO in this campaign's customer list (the campaign_customers table is in ClickHouse too).
+    cust_subq = (f"SELECT customer_mobile FROM {T_CUST} "
+                 f"WHERE source_db = '{SRC}' AND campaign_id = {int(camp_id)}")
+    print(f"  Matching store purchasers in ClickHouse ({start_dt} to {end_dt})...", flush=True)
     sql_purchasers = (f"SELECT customer_mobile, SUM(invoice_total) as customer_total "
                       f"FROM azure_invoice_report "
                       f"WHERE toDate(date) >= '{start_dt}' AND toDate(date) <= '{end_dt}' {branch_filter} "
+                      f"AND customer_mobile IN ({cust_subq}) "
                       f"GROUP BY customer_mobile "
                       f"HAVING customer_total > 0")
-    purchasers = query_clickhouse(sql_purchasers)
+    try:
+        purchasers = ch_db.query(sql_purchasers, timeout=180)
+    except Exception as e:
+        # Never write zero KPIs because of a transient ClickHouse failure - retry next cycle
+        print(f"  ClickHouse ERROR (skipping campaign this cycle): {e}", flush=True)
+        continue
     purchaser_map = {r['customer_mobile']: float(r.get('customer_total', 0) or 0) for r in purchasers if r.get('customer_mobile')}
-    purchaser_mobiles = list(purchaser_map.keys())
-
-    matched_mobiles = set()
-    for j in range(0, len(purchaser_mobiles), 5000):
-        ch = purchaser_mobiles[j:j+5000]
-        ph = ",".join("?" * len(ch))
-        c.execute(f"SELECT customer_mobile FROM campaign_customers WHERE campaign_id=? AND customer_mobile IN ({ph})", [camp_id] + ch)
-        for r in c.fetchall():
-            matched_mobiles.add(r[0])
+    matched_mobiles = set(purchaser_map.keys())
 
     # Check history (New vs Repeat) only for the matched purchasers
     repeat_customers = set()
@@ -293,16 +284,12 @@ for camp in camps:
     except Exception as e_bc:
         print(f"  Brand/Cat fetch error: {e_bc}", flush=True)
 
-    c.execute("""UPDATE campaigns SET purchase_count=?, purchase_value=?,
-                 conversion_rate=?, roi=?, budget=?, branch_code=?,
-                 new_customers=?, existing_customers=?,
-                 top_brands=?, top_categories=?
-                 WHERE id=?""",
-              (purchase_count, total_revenue, conv_rate, roi, budget, branch, 
-               new_customers, existing_customers,
-               json.dumps(top_brands), json.dumps(top_cats), camp_id))
-    conn.commit()
+    ch_db.update_campaign(camp_id, {
+        'purchase_count': purchase_count, 'purchase_value': total_revenue,
+        'conversion_rate': conv_rate, 'roi': roi, 'budget': budget, 'branch_code': branch,
+        'new_customers': new_customers, 'existing_customers': existing_customers,
+        'top_brands': json.dumps(top_brands), 'top_categories': json.dumps(top_cats),
+    })
     print(f"  ✅ Updated.", flush=True)
 
 print("\n=== DONE ===", flush=True)
-conn.close()

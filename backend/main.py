@@ -2,7 +2,6 @@ import os
 import io
 import csv
 import json
-import sqlite3
 import urllib.request
 import base64
 import sys
@@ -13,142 +12,9 @@ from openpyxl import load_workbook
 app = Bottle()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
-DB_FILE = os.environ.get('DB_FILE', os.path.join(ROOT_DIR, 'campaign_dashboard.db'))
+sys.path.insert(0, BASE_DIR)
+import ch_db   # ClickHouse data layer: campaigns / customers / config all live in ClickHouse (no local database)
 
-def get_db():
-    conn = sqlite3.connect(DB_FILE, timeout=30)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def init_db():
-    conn = get_db()
-    c = conn.cursor()
-    # Campaigns
-    c.execute('''CREATE TABLE IF NOT EXISTS campaigns (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        campaign_name TEXT,
-        type TEXT,
-        start_date TEXT,
-        end_date TEXT
-    )''')
-    # Add each column separately so a prior existing column doesn't block the rest
-    optional_cols = [
-        ('target_size',    'INTEGER DEFAULT 0'),
-        ('purchase_count', 'INTEGER DEFAULT 0'),
-        ('purchase_value', 'REAL DEFAULT 0.0'),
-        ('conversion_rate','REAL DEFAULT 0.0'),
-        ('roi',            'REAL DEFAULT 0.0'),
-        ('budget',         'REAL DEFAULT 0.0'),
-        ('source',         'TEXT DEFAULT ""'),
-        ('campaign_group', 'TEXT DEFAULT ""'),
-        ('data_source',    'TEXT DEFAULT ""'),
-        ('top_brands',     'TEXT DEFAULT "[]"'),
-        ('top_categories', 'TEXT DEFAULT "[]"'),
-        ('branch_code',    'TEXT DEFAULT ""'),   # ClickHouse branch code for this campaign's store
-        ('sl_no',          'INTEGER DEFAULT 0'),
-        ('sheet_tab',      'TEXT DEFAULT ""'),
-        ('new_customers',  'INTEGER DEFAULT 0'),
-        ('existing_customers', 'INTEGER DEFAULT 0'),
-    ]
-    for col_name, col_def in optional_cols:
-        try:
-            c.execute(f'ALTER TABLE campaigns ADD COLUMN {col_name} {col_def}')
-        except sqlite3.OperationalError:
-            pass  # Column already exists
-    # Campaign Customers
-    c.execute('''CREATE TABLE IF NOT EXISTS campaign_customers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        campaign_id INTEGER,
-        customer_mobile TEXT,
-        customer_name TEXT,
-        store_name TEXT
-    )''')
-    # Billing
-    c.execute('''CREATE TABLE IF NOT EXISTS billing (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        bill_date TEXT,
-        bill_no TEXT,
-        customer_mobile TEXT,
-        customer_name TEXT,
-        store_name TEXT,
-        item_name TEXT,
-        item_category TEXT,
-        quantity INTEGER,
-        taxable_value REAL,
-        tax_value REAL,
-        net_value REAL,
-        cashier TEXT,
-        sales_person TEXT
-    )''')
-    # Config table for dashboard-wide aggregates
-    c.execute('''CREATE TABLE IF NOT EXISTS config (
-        key TEXT PRIMARY KEY,
-        value TEXT
-    )''')
-    conn.commit()
-
-    # Auto-seed verified ClickHouse campaign metrics if DB is fresh / unpopulated (e.g. on Render deploy)
-    try:
-        c.execute("SELECT count(*), coalesce(sum(purchase_value), 0) FROM campaigns")
-        row = c.fetchone()
-        c_count = row[0] if row else 0
-        c_val = float(row[1] or 0)
-        seed_file = os.path.join(BASE_DIR, 'seed_campaigns.json')
-        if (c_count == 0 or c_val <= 0) and os.path.exists(seed_file):
-            print(f"[SEED] Initializing campaigns from {seed_file} (current DB count={c_count}, revenue=₹{c_val:,.2f})...")
-            with open(seed_file, 'r', encoding='utf-8') as f:
-                seed_data = json.load(f)
-            cols = [
-                'id', 'campaign_name', 'type', 'start_date', 'end_date',
-                'target_size', 'purchase_count', 'purchase_value', 'conversion_rate',
-                'roi', 'budget', 'source', 'campaign_group', 'data_source',
-                'top_brands', 'top_categories', 'branch_code', 'new_customers',
-                'existing_customers', 'sl_no', 'sheet_tab'
-            ]
-            for r in seed_data:
-                existing = None
-                if r.get('id'):
-                    existing = c.execute("SELECT id, purchase_value FROM campaigns WHERE id=?", (r['id'],)).fetchone()
-                if not existing and r.get('sl_no') and r.get('sheet_tab'):
-                    existing = c.execute("SELECT id, purchase_value FROM campaigns WHERE sl_no=? AND sheet_tab=?", (r['sl_no'], r['sheet_tab'])).fetchone()
-                
-                if not existing:
-                    vals = [r.get(col, 0 if ('count' in col or 'size' in col or 'customers' in col or 'sl_no' in col) else ('[]' if 'top_' in col else '')) for col in cols]
-                    c.execute(f"INSERT INTO campaigns ({','.join(cols)}) VALUES ({','.join(['?']*len(cols))})", vals)
-                else:
-                    if float(existing['purchase_value'] or 0) <= 0:
-                        c.execute("""UPDATE campaigns SET
-                            purchase_count = ?,
-                            purchase_value = ?,
-                            conversion_rate = ?,
-                            roi = ?,
-                            new_customers = ?,
-                            existing_customers = ?,
-                            top_brands = ?,
-                            top_categories = ?,
-                            branch_code = COALESCE(NULLIF(branch_code, ''), ?)
-                            WHERE id = ?""", (
-                            r.get('purchase_count', 0),
-                            r.get('purchase_value', 0.0),
-                            r.get('conversion_rate', 0.0),
-                            r.get('roi', 0.0),
-                            r.get('new_customers', 0),
-                            r.get('existing_customers', 0),
-                            r.get('top_brands', '[]'),
-                            r.get('top_categories', '[]'),
-                            r.get('branch_code', ''),
-                            existing['id']
-                        ))
-            c.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('total_audience_reached', '14547880')")
-            conn.commit()
-            print(f"[SEED SUCCESS] Populated {len(seed_data)} campaigns with verified ClickHouse data.")
-    except Exception as e_seed:
-        print(f"[SEED ERROR] Failed to seed database: {e_seed}")
-    finally:
-        conn.close()
-
-# Ensure DB exists
-init_db()
 
 # --- CORS Middleware ---
 @app.hook('before_request')
@@ -316,10 +182,21 @@ def parse_campaign_group_dates(campaign_group, sheet_date_str):
     # Fallback: use the Sheets date as both start and end
     return sheet_date_str[:10], sheet_date_str[:10]
 
+def _norm_key(v):
+    return str(v or '').strip().lower()
+
+def _field_changed(old, new):
+    """True when a stored campaign value differs from the new one (numbers compared with a tolerance)."""
+    if isinstance(new, (int, float)) and not isinstance(new, bool):
+        try:
+            return abs(float(old or 0) - float(new)) > 1e-9
+        except Exception:
+            return True
+    return str(old or '') != str(new or '')
+
 def _sync_campaign_master():
     url = "https://script.google.com/macros/s/AKfycbwLu3feQq0BCxUFFxpUhamKLfNa5njxmJLZ4yBRY9pmPtsgBIXEFSzeVADBt5hlG9Y_DQ/exec"
     
-    conn = get_db(); c = conn.cursor()
     try:
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req) as res:
@@ -329,6 +206,10 @@ def _sync_campaign_master():
         # purchase_count, roi, conversion_rate) so revenue data is never lost on re-sync.
         # Track synced campaign IDs to prevent accidental deletion
         synced_ids = set()
+
+        # Current campaigns + customer counts are read once from ClickHouse and matched in memory
+        db_rows = ch_db.list_campaigns(order_by='id')
+        cust_counts = ch_db.customer_counts()
 
         for row in campaigns_data:
             camp_name = str(row.get('Campaign Name', 'Unknown')).strip()
@@ -352,165 +233,129 @@ def _sync_campaign_master():
             # Robust lookup: Match by (sl_no, sheet_tab) if available, or by name + type + group/date
             existing = None
             if sl_no > 0 and sheet_tab:
-                existing = c.execute(
-                    "SELECT id, branch_code, data_source, campaign_group, start_date, end_date, purchase_count FROM campaigns WHERE sl_no=? AND sheet_tab=?",
-                    (sl_no, sheet_tab)
-                ).fetchone()
+                existing = next((r for r in db_rows if r['sl_no'] == sl_no and r['sheet_tab'] == sheet_tab), None)
 
             if not existing and camp_group:
-                existing = c.execute(
-                    "SELECT id, branch_code, data_source, campaign_group, start_date, end_date, purchase_count FROM campaigns WHERE LOWER(TRIM(campaign_name))=LOWER(TRIM(?)) AND LOWER(TRIM(type))=LOWER(TRIM(?)) AND LOWER(TRIM(campaign_group))=LOWER(TRIM(?))",
-                    (camp_name, camp_type, camp_group)
-                ).fetchone()
+                existing = next((r for r in db_rows
+                                 if _norm_key(r['campaign_name']) == _norm_key(camp_name)
+                                 and _norm_key(r['type']) == _norm_key(camp_type)
+                                 and _norm_key(r['campaign_group']) == _norm_key(camp_group)), None)
 
             if not existing and start_date:
-                existing = c.execute(
-                    "SELECT id, branch_code, data_source, campaign_group, start_date, end_date, purchase_count FROM campaigns WHERE LOWER(TRIM(campaign_name))=LOWER(TRIM(?)) AND LOWER(TRIM(type))=LOWER(TRIM(?)) AND start_date=?",
-                    (camp_name, camp_type, start_date)
-                ).fetchone()
+                existing = next((r for r in db_rows
+                                 if _norm_key(r['campaign_name']) == _norm_key(camp_name)
+                                 and _norm_key(r['type']) == _norm_key(camp_type)
+                                 and r['start_date'] == start_date), None)
 
             if existing:
                 synced_ids.add(existing['id'])
                 # Detect date changes: if date changed, reset purchase_count to trigger re-attribution in fixkpi.py
                 date_changed = (existing['start_date'] != start_date or existing['end_date'] != end_date)
                 
-                # Update the record with latest values including dates and branch_code
-                c.execute("""
-                    UPDATE campaigns 
-                    SET campaign_name=?, budget=?, target_size=?, campaign_group=?, data_source=?,
-                        start_date=?, end_date=?, sl_no=?, sheet_tab=?
-                    WHERE id=?
-                """, (camp_name, budget, sms_delivered, camp_group, data_source,
-                      start_date, end_date, sl_no, sheet_tab, existing['id']))
-                
+                # Latest values including dates and branch_code
+                updates = {
+                    'campaign_name': camp_name, 'budget': budget, 'target_size': sms_delivered,
+                    'campaign_group': camp_group, 'data_source': data_source,
+                    'start_date': start_date, 'end_date': end_date, 'sl_no': sl_no, 'sheet_tab': sheet_tab,
+                }
                 if b_code:
-                    c.execute("UPDATE campaigns SET branch_code=? WHERE id=?", (b_code, existing['id']))
+                    updates['branch_code'] = b_code
                     
                 # Only trigger customer drop / re-attribution if this campaign has ingested customers
-                cust_cnt = c.execute("SELECT count(*) FROM campaign_customers WHERE campaign_id=?", (existing['id'],)).fetchone()[0]
+                cust_cnt = cust_counts.get(existing['id'], 0)
                 if cust_cnt > 0:
+                    kpi_reset = {'purchase_count': 0, 'purchase_value': 0.0, 'conversion_rate': 0.0, 'roi': 0.0,
+                                 'new_customers': 0, 'existing_customers': 0}
                     if existing['data_source'] and existing['data_source'].strip().lower() != data_source.strip().lower():
                         print(f"[{camp_name}] Data source changed ({existing['data_source']} -> {data_source}). Dropping old customers.")
-                        c.execute("DELETE FROM campaign_customers WHERE campaign_id=?", (existing['id'],))
-                        c.execute("""UPDATE campaigns 
-                                     SET purchase_count=0, purchase_value=0.0, conversion_rate=0.0, roi=0.0,
-                                         new_customers=0, existing_customers=0
-                                     WHERE id=?""", (existing['id'],))
+                        ch_db.delete_customers(existing['id'])
+                        cust_counts.pop(existing['id'], None)
+                        updates.update(kpi_reset)
                     elif date_changed:
                         # If date changed, reset KPIs so fixkpi.py recalculates for the new date window
                         print(f"[{camp_name}] Dates updated to {start_date} -> {end_date}. Triggering re-attribution.")
-                        c.execute("""UPDATE campaigns 
-                                     SET purchase_count=0, purchase_value=0.0, conversion_rate=0.0, roi=0.0,
-                                         new_customers=0, existing_customers=0
-                                     WHERE id=?""", (existing['id'],))
+                        updates.update(kpi_reset)
+
+                # One ClickHouse UPDATE per campaign, and only for values that actually changed
+                changed = {k: v for k, v in updates.items() if _field_changed(existing.get(k), v)}
+                if changed:
+                    ch_db.update_campaign(existing['id'], changed)
+                    existing.update(changed)
             else:
-                c.execute("""
-                    INSERT INTO campaigns
-                        (campaign_name, type, start_date, end_date, source,
-                         campaign_group, data_source, budget, target_size, branch_code, sl_no, sheet_tab)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (camp_name, camp_type, start_date, end_date, camp_source,
-                      camp_group, data_source, budget, sms_delivered, b_code, sl_no, sheet_tab))
-                new_id = c.lastrowid
+                new_vals = {
+                    'campaign_name': camp_name, 'type': camp_type, 'start_date': start_date, 'end_date': end_date,
+                    'source': camp_source, 'campaign_group': camp_group, 'data_source': data_source,
+                    'budget': budget, 'target_size': sms_delivered, 'branch_code': b_code,
+                    'sl_no': sl_no, 'sheet_tab': sheet_tab,
+                }
+                new_id = ch_db.insert_campaign(new_vals)
+                db_rows.append({**{c: 0 for c in ch_db.CAMPAIGN_COLS}, **new_vals, 'id': new_id,
+                                'top_brands': '[]', 'top_categories': '[]'})
                 synced_ids.add(new_id)
 
         # Compute total SMS Delivered directly from sheet rows (ground truth)
         total_sms_delivered = sum(int(r.get('SMS Delivered', 0) or 0) for r in campaigns_data)
-        c.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('total_audience_reached', ?)",
-                  (str(total_sms_delivered),))
+        if str(ch_db.get_config('total_audience_reached')) != str(total_sms_delivered):
+            ch_db.set_config('total_audience_reached', total_sms_delivered)
 
         # Delete only campaigns that are truly removed and have 0 purchases (never delete settled revenue!)
-        all_db = c.execute("SELECT id, campaign_name, purchase_count FROM campaigns").fetchall()
-        for r in all_db:
-            if r['id'] not in synced_ids:
-                if int(r['purchase_count'] or 0) > 0:
-                    print(f"Preserving campaign {r['id']} ({r['campaign_name']}) with active purchases.")
-                    continue
-                print(f"Deleting removed empty campaign: {r['campaign_name']} (ID: {r['id']})")
-                c.execute("DELETE FROM campaign_customers WHERE campaign_id=?", (r['id'],))
-                c.execute("DELETE FROM campaigns WHERE id=?", (r['id'],))
+        # (skipped entirely if the sheet came back empty, so a bad fetch can't wipe campaigns)
+        if campaigns_data:
+            for r in db_rows:
+                if r['id'] not in synced_ids:
+                    if int(r['purchase_count'] or 0) > 0:
+                        print(f"Preserving campaign {r['id']} ({r['campaign_name']}) with active purchases.")
+                        continue
+                    print(f"Deleting removed empty campaign: {r['campaign_name']} (ID: {r['id']})")
+                    ch_db.delete_campaign(r['id'])
 
-        conn.commit()
         print(f"[BACKGROUND SYNC] Successfully synced {len(campaigns_data)} campaigns. Total Audience Reached: {total_sms_delivered:,}")
     except Exception as e:
-        conn.rollback()
         print(f"[BACKGROUND SYNC ERROR] Sheets sync failed: {e}")
-    finally: conn.close()
 
 
 
-CH_URL  = os.environ.get('CH_URL', "https://pdhsuv47ec.ap-south-1.aws.clickhouse.cloud:8443/")
-CH_USER = os.environ.get('CH_USER', "default")
-CH_PASS = os.environ.get('CH_PASS', "ZFlujj9SA_Iei")
+
+CH_URL  = ch_db.CH_URL
+CH_USER = ch_db.CH_USER
+CH_PASS = ch_db.CH_PASS
 
 _LAST_CH_ERROR = None
 
 def query_clickhouse(query):
+    """Run a SELECT on ClickHouse (shared curl-based transport with retries). Returns [] on error."""
     global _LAST_CH_ERROR
-    req = urllib.request.Request(CH_URL)
-    base64string = base64.b64encode(f"{CH_USER}:{CH_PASS}".encode('ascii')).decode('ascii')
-    req.add_header('Authorization', 'Basic ' + base64string)
-    req.add_header('Content-Type', 'text/plain')
-    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) CampaignDashboard/1.0')
-    full_query = query + " FORMAT JSON"
-    req.data = full_query.encode('utf-8')
     try:
-        with urllib.request.urlopen(req, timeout=25) as response:
-            response_data = response.read().decode('utf-8')
-            _LAST_CH_ERROR = None
-            return json.loads(response_data).get('data', [])
-    except urllib.error.HTTPError as e:
-        err_body = ""
-        try:
-            err_body = e.read().decode('utf-8', errors='ignore')
-        except:
-            pass
-        _LAST_CH_ERROR = f"HTTP {e.code}: {e.reason} ({err_body.strip()})"
-        print(f"[CLICKHOUSE HTTP ERROR] {_LAST_CH_ERROR}")
-        return []
+        rows = ch_db.query(query, timeout=30, quote64=True)
+        _LAST_CH_ERROR = None
+        return rows
     except Exception as e:
         _LAST_CH_ERROR = str(e)
         print(f"[CLICKHOUSE ERROR] {e}")
         return []
 
+
 @app.route('/api/clickhouse/status', method='GET')
 def api_clickhouse_status():
-    """Diagnostic endpoint to verify ClickHouse Cloud connectivity from Render."""
+    """Diagnostic endpoint to verify ClickHouse Cloud connectivity and the dashboard tables."""
     import time
     t0 = time.time()
     try:
-        test_query = "SELECT 1 as ok, version() as ch_version FORMAT JSON"
-        req = urllib.request.Request(CH_URL)
-        base64string = base64.b64encode(f"{CH_USER}:{CH_PASS}".encode('ascii')).decode('ascii')
-        req.add_header('Authorization', 'Basic ' + base64string)
-        req.add_header('Content-Type', 'text/plain')
-        req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) CampaignDashboard/1.0')
-        req.data = test_query.encode('utf-8')
-        
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            elapsed = round((time.time() - t0) * 1000, 2)
-            return {
-                "status": "connected",
-                "host": "pdhsuv47ec.ap-south-1.aws.clickhouse.cloud",
-                "response_time_ms": elapsed,
-                "version": data.get('data', [{}])[0].get('ch_version', 'unknown'),
-                "message": "ClickHouse Cloud is connected and responding!"
-            }
-    except urllib.error.HTTPError as e:
+        info = ch_db.query("SELECT version() AS ch_version", timeout=15)
+        counts = ch_db.query(
+            f"SELECT (SELECT count() FROM {ch_db.T_CAMP} WHERE source_db = '{ch_db.SRC}') AS campaigns, "
+            f"(SELECT count() FROM {ch_db.T_CONF} WHERE source_db = '{ch_db.SRC}') AS config_rows", timeout=30)
         elapsed = round((time.time() - t0) * 1000, 2)
-        err_body = ""
-        try:
-            err_body = e.read().decode('utf-8', errors='ignore')
-        except:
-            pass
         return {
-            "status": "blocked",
-            "code": e.code,
-            "reason": str(e.reason),
-            "body": err_body,
-            "elapsed_ms": elapsed,
-            "hint": "ClickHouse Cloud IP Access List is blocking Render. Go to ClickHouse Cloud Console -> Security -> IP Access List -> Add 0.0.0.0/0 (Anywhere)."
+            "status": "connected",
+            "host": "pdhsuv47ec.ap-south-1.aws.clickhouse.cloud",
+            "response_time_ms": elapsed,
+            "version": info[0].get('ch_version', 'unknown') if info else 'unknown',
+            "tables": {
+                ch_db.T_CAMP: counts[0].get('campaigns', 0) if counts else 0,
+                ch_db.T_CONF: counts[0].get('config_rows', 0) if counts else 0,
+            },
+            "message": "ClickHouse Cloud is connected and responding!"
         }
     except Exception as e:
         elapsed = round((time.time() - t0) * 1000, 2)
@@ -518,13 +363,14 @@ def api_clickhouse_status():
             "status": "connection_error",
             "error": str(e),
             "elapsed_ms": elapsed,
-            "hint": "Could not connect to ClickHouse Cloud. Check if 0.0.0.0/0 is whitelisted in ClickHouse Cloud Console."
+            "hint": "Could not connect to ClickHouse Cloud. Check CH_URL / CH_USER / CH_PASS and that 0.0.0.0/0 is whitelisted in ClickHouse Cloud Console -> Security -> IP Access List."
         }
 
-def calculate_kpis_for_campaign(c, campaign_id, start_date, end_date, budget):
+
+def calculate_kpis_for_campaign(campaign_id, start_date, end_date, budget):
     from datetime import datetime, timedelta
     
-    # Determine the date window for ClickHouse queries (READ ONLY)
+    # Determine the date window for ClickHouse queries
     # Rule: single-day campaign → only that day
     #       multi-day campaign  → start_date to start_date + 2 days
     try:
@@ -547,12 +393,12 @@ def calculate_kpis_for_campaign(c, campaign_id, start_date, end_date, budget):
     print(f"[KPI] Campaign {campaign_id}: date window {query_start} → {query_end}")
     
     # Use SMS Delivered (from sheet, stored as target_size) as the audience denominator.
-    sheet_row = c.execute("SELECT target_size, branch_code FROM campaigns WHERE id=?", (campaign_id,)).fetchone()
+    sheet_row = ch_db.get_campaign(campaign_id)
     sms_delivered = sheet_row['target_size'] if sheet_row and sheet_row['target_size'] else 0
     branch_code   = (sheet_row['branch_code'] or '').strip() if sheet_row else ''
     
     total_val = 0.0
-    unique_customers = set()   # mobile numbers that appear in BOTH Drive AND ClickHouse
+    unique_customers = set()   # mobile numbers that appear in BOTH the campaign audience AND ClickHouse invoices
     all_invoice_nos  = set()   # for brand/category breakdown query
     
     b_filter = f"AND branch = '{branch_code}'" if branch_code else ""
@@ -561,34 +407,29 @@ def calculate_kpis_for_campaign(c, campaign_id, start_date, end_date, budget):
     else:
         print(f"[KPI] Campaign {campaign_id}: no branch filter (All Kerala), SMS Delivered={sms_delivered}")
 
-    # Fetch store/state purchasers in 1 single ClickHouse query
+    # Store/state purchasers who are ALSO in this campaign's audience (campaign_customers lives in ClickHouse),
+    # found in 1 single ClickHouse query
     query = (f"SELECT customer_mobile, "
              f"groupArray(invoice_no) as invoices, "
              f"SUM(invoice_total) as customer_total "
              f"FROM azure_invoice_report "
              f"WHERE date >= '{query_start}' AND date <= '{query_end} 23:59:59' {b_filter} "
+             f"AND customer_mobile IN (SELECT customer_mobile FROM {ch_db.T_CUST} "
+             f"WHERE source_db = '{ch_db.SRC}' AND campaign_id = {int(campaign_id)}) "
              f"GROUP BY customer_mobile "
              f"HAVING customer_total > 0")
     
-    store_data = query_clickhouse(query)
-    purchaser_map = {r['customer_mobile']: r for r in store_data if r.get('customer_mobile')}
-    purchaser_mobiles = list(purchaser_map.keys())
-    
-    # Intersect with SQLite indexed campaign_customers table
-    for j in range(0, len(purchaser_mobiles), 5000):
-        ch = purchaser_mobiles[j:j+5000]
-        ph = ",".join("?" * len(ch))
-        c.execute(f"SELECT customer_mobile FROM campaign_customers WHERE campaign_id=? AND customer_mobile IN ({ph})", [campaign_id] + ch)
-        for row in c.fetchall():
-            mob = row[0]
-            if mob and mob not in unique_customers:
-                unique_customers.add(mob)
-                r_data = purchaser_map[mob]
-                total_val += float(r_data.get('customer_total', 0) or 0)
-                for inv in (r_data.get('invoices') or []):
-                    all_invoice_nos.add(inv)
+    # Raises on a ClickHouse failure so zero KPIs are never written because of a transient error
+    store_data = ch_db.query(query, timeout=180, quote64=True)
+    for r_data in store_data:
+        mob = r_data.get('customer_mobile')
+        if mob and mob not in unique_customers:
+            unique_customers.add(mob)
+            total_val += float(r_data.get('customer_total', 0) or 0)
+            for inv in (r_data.get('invoices') or []):
+                all_invoice_nos.add(inv)
 
-    # Purchase Count = number of unique customers who are in BOTH Drive AND ClickHouse
+    # Purchase Count = number of unique customers who are in BOTH the campaign audience AND ClickHouse invoices
     purchase_count = len(unique_customers)
     
     # Conversion rate = customers who purchased / SMS Delivered
@@ -637,21 +478,18 @@ def calculate_kpis_for_campaign(c, campaign_id, start_date, end_date, budget):
     existing_customers = len(repeat_customers)
     new_customers = purchase_count - existing_customers
 
-    # Write computed KPIs to local SQLite only (ClickHouse is never modified)
+    # Write computed KPIs to the ClickHouse campaigns table
     # NOTE: target_size (SMS Delivered) is NOT overwritten here — it was set from the sheet in _sync_campaign_master
-    c.execute('''UPDATE campaigns 
-                 SET purchase_count=?, purchase_value=?, conversion_rate=?, roi=?, budget=?,
-                     new_customers=?, existing_customers=?,
-                     top_brands=?, top_categories=?
-                 WHERE id=?''', 
-              (purchase_count, total_val, conversion_rate, roi, budget,
-               new_customers, existing_customers,
-               json.dumps(top_brands), json.dumps(top_categories), campaign_id))
+    ch_db.update_campaign(campaign_id, {
+        'purchase_count': purchase_count, 'purchase_value': total_val,
+        'conversion_rate': conversion_rate, 'roi': roi, 'budget': budget,
+        'new_customers': new_customers, 'existing_customers': existing_customers,
+        'top_brands': json.dumps(top_brands), 'top_categories': json.dumps(top_categories),
+    })
 
 def _sync_campaign_data():
     url = "https://script.google.com/macros/s/AKfycbx8RQoxU-Js-kQuY7cs90K7Rc1-pDUxq7OzLM1Oj9G5q2Kw5otr-gsJI66f_lJ1KXJCSQ/exec"
         
-    conn = get_db(); c = conn.cursor()
     try:
         # Step 1: Fetch ALL files from Drive once (no campaign name filter)
         try:
@@ -674,8 +512,8 @@ def _sync_campaign_data():
         ]
         
         # Get all campaigns
-        c.execute("SELECT id, campaign_name, type, start_date, end_date, data_source, budget, purchase_value, branch_code FROM campaigns")
-        campaigns = c.fetchall()
+        campaigns = ch_db.list_campaigns(order_by='id')
+        cust_counts = ch_db.customer_counts()
 
         for camp in campaigns:
             camp_id = camp['id']
@@ -686,8 +524,7 @@ def _sync_campaign_data():
 
             # CRITICAL RULE: If a campaign is already settled (has customers & purchase_value > 0),
             # NEVER modify, wipe, or recalculate it! Keep it 100% frozen and intact!
-            c.execute("SELECT COUNT(*) FROM campaign_customers WHERE campaign_id=?", (camp_id,))
-            cust_cnt = c.fetchone()[0] or 0
+            cust_cnt = cust_counts.get(camp_id, 0)
             if cust_cnt > 0 and camp['purchase_value'] and float(camp['purchase_value'] or 0) > 0:
                 continue
 
@@ -701,7 +538,7 @@ def _sync_campaign_data():
             if not branch_code:
                 branch_code, branch_name = resolve_branch_from_clickhouse(camp_name)
                 if branch_code:
-                    c.execute("UPDATE campaigns SET branch_code=? WHERE id=?", (branch_code, camp_id))
+                    ch_db.update_campaign(camp_id, {'branch_code': branch_code})
             else:
                 branch_name = CLICKHOUSE_BRANCH_MAP.get(branch_code, '')
 
@@ -812,8 +649,7 @@ def _sync_campaign_data():
             seen_mobiles = set()
             try:
                 # Scoped deletion before re-inserting
-                c.execute("DELETE FROM campaign_customers WHERE campaign_id=?", (camp_id,))
-                conn.commit()
+                ch_db.delete_customers(camp_id)
 
                 batch = []
                 total_inserted = 0
@@ -830,9 +666,9 @@ def _sync_campaign_data():
                                     mob = clean_m[-10:]
                                     if mob not in seen_mobiles:
                                         seen_mobiles.add(mob)
-                                        batch.append((camp_id, mob, '', ''))
-                                        if len(batch) >= 20000:
-                                            c.executemany("INSERT INTO campaign_customers (campaign_id, customer_mobile, customer_name, store_name) VALUES (?, ?, ?, ?)", batch)
+                                        batch.append(mob)
+                                        if len(batch) >= 200000:
+                                            ch_db.insert_customers(camp_id, batch)
                                             total_inserted += len(batch)
                                             batch = []
                     else:
@@ -846,9 +682,9 @@ def _sync_campaign_data():
                                 mob = clean_m[-10:]
                                 if mob not in seen_mobiles:
                                     seen_mobiles.add(mob)
-                                    batch.append((camp_id, mob, '', ''))
-                                    if len(batch) >= 20000:
-                                        c.executemany("INSERT INTO campaign_customers (campaign_id, customer_mobile, customer_name, store_name) VALUES (?, ?, ?, ?)", batch)
+                                    batch.append(mob)
+                                    if len(batch) >= 200000:
+                                        ch_db.insert_customers(camp_id, batch)
                                         total_inserted += len(batch)
                                         batch = []
                 elif file_name.endswith('.xls') or file_name.endswith('.xlsx'):
@@ -864,54 +700,33 @@ def _sync_campaign_data():
                                 mob = clean_m[-10:]
                                 if mob not in seen_mobiles:
                                     seen_mobiles.add(mob)
-                                    batch.append((camp_id, mob, '', ''))
-                                    if len(batch) >= 20000:
-                                        c.executemany("INSERT INTO campaign_customers (campaign_id, customer_mobile, customer_name, store_name) VALUES (?, ?, ?, ?)", batch)
+                                    batch.append(mob)
+                                    if len(batch) >= 200000:
+                                        ch_db.insert_customers(camp_id, batch)
                                         total_inserted += len(batch)
                                         batch = []
 
                 if batch:
-                    c.executemany("INSERT INTO campaign_customers (campaign_id, customer_mobile, customer_name, store_name) VALUES (?, ?, ?, ?)", batch)
+                    ch_db.insert_customers(camp_id, batch)
                     total_inserted += len(batch)
                     batch = []
 
-                conn.commit()
                 print(f"[SYNC] Ingested {total_inserted:,} customers for '{camp_name}' (ID: {camp_id})")
             except Exception as e:
                 print(f"[BACKGROUND SYNC ERROR] File parsing failed: {e}")
                 continue
 
             # Compute KPIs for this new campaign
-            c.execute("SELECT budget, end_date FROM campaigns WHERE id=?", (camp_id,))
-            row = c.fetchone()
-            budget = row['budget'] or 0
-            camp_end_date = row['end_date'] or start_date
+            row = ch_db.get_campaign(camp_id) or {}
+            budget = row.get('budget') or 0
+            camp_end_date = row.get('end_date') or start_date
 
-            calculate_kpis_for_campaign(c, camp_id, start_date, camp_end_date, budget)
-            conn.commit()
+            calculate_kpis_for_campaign(camp_id, start_date, camp_end_date, budget)
 
         print(f"[BACKGROUND SYNC] Finished syncing data for campaigns.")
     except Exception as e:
-        conn.rollback()
         print(f"[BACKGROUND SYNC ERROR] Data sync failed: {e}")
-    finally:
-        conn.close()
 
-
-def query_clickhouse(query):
-    req = urllib.request.Request(CH_URL)
-    base64string = base64.b64encode(f"{CH_USER}:{CH_PASS}".encode('ascii')).decode('ascii')
-    req.add_header('Authorization', 'Basic ' + base64string)
-    req.add_header('Content-Type', 'text/plain')
-    full_query = query + " FORMAT JSON"
-    req.data = full_query.encode('utf-8')
-    try:
-        response = urllib.request.urlopen(req)
-        response_data = response.read().decode('utf-8')
-        return json.loads(response_data).get('data', [])
-    except Exception as e:
-        print("ClickHouse Error:", e)
-        return []
 
 # Preload branch map at startup
 _CH_BRANCHES_CACHE = None
@@ -980,10 +795,8 @@ def get_campaign_store_sales(campaign_id):
     Products: TV / Refrigerator / Washing Machine / Mobile / Laptop / AC / Others.
     Reconciled with MyG POS Daily Sales Report.
     """
-    conn = get_db(); c = conn.cursor()
     try:
-        c.execute('SELECT * FROM campaigns WHERE id=?', (campaign_id,))
-        camp = c.fetchone()
+        camp = ch_db.get_campaign(campaign_id)
         if not camp:
             response.status = 404
             return {'detail': 'Campaign not found'}
@@ -1194,8 +1007,6 @@ def get_campaign_store_sales(campaign_id):
         import traceback
         response.status = 500
         return {'detail': traceback.format_exc()}
-    finally:
-        conn.close()
 
 
 @app.route('/api/campaign/<campaign_id>/brand-breakdown', method='GET')
@@ -1206,20 +1017,13 @@ def get_brand_breakdown(campaign_id):
     Returns: list of {brand, qty, revenue, share_pct} sorted by revenue desc.
     AC rule: NEVER count AC OUTDOOR.
     """
-    conn = get_db(); c = conn.cursor()
-    try:
-        c.execute('SELECT * FROM campaigns WHERE id=?', (campaign_id,))
-        camp = c.fetchone()
-        if not camp:
-            response.status = 404
-            return {'detail': 'Campaign not found'}
-        camp = dict(camp)
-        start_date = (camp.get('start_date') or '')[:10]
-        end_date   = (camp.get('end_date')   or start_date)[:10]
-        branch, branch_name = _resolve_branch(camp.get('campaign_name',''), camp.get('branch_code',''))
-    finally:
-        try: conn.close()
-        except: pass
+    camp = ch_db.get_campaign(campaign_id)
+    if not camp:
+        response.status = 404
+        return {'detail': 'Campaign not found'}
+    start_date = (camp.get('start_date') or '')[:10]
+    end_date   = (camp.get('end_date')   or start_date)[:10]
+    branch, branch_name = _resolve_branch(camp.get('campaign_name',''), camp.get('branch_code',''))
 
     product = (request.query.get('product', 'TV') or 'TV').strip()
     norm_product = product.upper()
@@ -1389,20 +1193,13 @@ def get_campaign_incremental_lift(campaign_id):
     Compares each day of the campaign with the EXACT same day of the previous week (start_date - 7 days to end_date - 7 days).
     Controls for day-of-week seasonality (e.g. Thu vs previous Thu, Sun vs previous Sun).
     """
-    conn = get_db(); c = conn.cursor()
-    try:
-        c.execute('SELECT * FROM campaigns WHERE id=?', (campaign_id,))
-        camp = c.fetchone()
-        if not camp:
-            response.status = 404
-            return {'detail': 'Campaign not found'}
-        camp = dict(camp)
-        start_date_str = (camp.get('start_date') or '')[:10]
-        end_date_str   = (camp.get('end_date')   or start_date_str)[:10]
-        branch, branch_name = _resolve_branch(camp.get('campaign_name',''), camp.get('branch_code',''))
-    finally:
-        try: conn.close()
-        except: pass
+    camp = ch_db.get_campaign(campaign_id)
+    if not camp:
+        response.status = 404
+        return {'detail': 'Campaign not found'}
+    start_date_str = (camp.get('start_date') or '')[:10]
+    end_date_str   = (camp.get('end_date')   or start_date_str)[:10]
+    branch, branch_name = _resolve_branch(camp.get('campaign_name',''), camp.get('branch_code',''))
 
     if not start_date_str:
         return {'days': [], 'error': 'Campaign dates could not be resolved'}
@@ -1617,14 +1414,10 @@ def get_period_filter_sql(table_prefix=""):
 
 @app.route('/api/campaigns', method='GET')
 def get_campaigns():
-    conn = get_db()
-    c = conn.cursor()
     try:
         df = get_period_filter_sql()
-        c.execute(f'SELECT * FROM campaigns WHERE 1=1 {df} ORDER BY start_date DESC')
         campaigns = []
-        for r in c.fetchall():
-            camp = dict(r)
+        for camp in ch_db.list_campaigns(df, order_by='start_date DESC, id ASC'):
             # Parse JSON fields stored as strings
             try:
                 camp['top_brands'] = json.loads(camp.get('top_brands') or '[]')
@@ -1649,82 +1442,72 @@ def get_campaigns():
     except Exception as e:
         response.status = 500
         return {"detail": str(e)}
-    finally: conn.close()
 
 @app.route('/api/dashboard/stats', method='GET')
 def get_dashboard_stats():
-    conn = get_db()
-    c = conn.cursor()
     try:
         df = get_period_filter_sql()
+        base = f"FROM {ch_db.T_CAMP} WHERE source_db = '{ch_db.SRC}' {df}"
         
         # Total campaigns = distinct campaign groups (not rows, which inflate by channel)
-        c.execute(f'SELECT COUNT(*) FROM campaigns WHERE 1=1 {df}')
-        total_campaigns = c.fetchone()[0] or 0
+        # Revenue & ROI — each sheet row is a separate campaign (no deduplication).
+        # User confirmed: same store, same group, different mode/data = fully independent rows.
+        rows = ch_db.query(
+            f"SELECT count() AS total_campaigns, "
+            f"sumIf(target_size, target_size > 0) AS sum_target, "
+            f"sumIf(purchase_value, purchase_value > 0) AS total_sales, "
+            f"avgIf(roi, purchase_value > 0) AS avg_roi {base}")
+        row = rows[0] if rows else {}
+        total_campaigns = int(row.get('total_campaigns') or 0)
 
         # Audience Reached = exact SUM of SMS Delivered from Google Sheet (stored during sync)
+        total_reached = 0
         if not df:
-            c.execute("SELECT value FROM config WHERE key='total_audience_reached'")
-            row_cfg = c.fetchone()
-            total_reached = int(row_cfg['value']) if row_cfg else 0
-        else:
-            total_reached = 0
+            cfg = ch_db.get_config('total_audience_reached')
+            total_reached = int(float(cfg)) if cfg not in (None, '') else 0
             
         # Fallback: sum from campaigns table if config not yet populated or if filtered
         if total_reached == 0:
-            c.execute(f'SELECT COALESCE(SUM(target_size),0) FROM campaigns WHERE target_size > 0 {df}')
-            total_reached = int(c.fetchone()[0] or 0)
+            total_reached = int(row.get('sum_target') or 0)
 
-
-        # Revenue & ROI — each sheet row is a separate campaign (no deduplication).
-        # User confirmed: same store, same group, different mode/data = fully independent rows.
-        c.execute(f'''
-            SELECT COALESCE(SUM(purchase_value), 0) as total_sales,
-                   COALESCE(AVG(roi), 0)            as avg_roi
-            FROM campaigns
-            WHERE purchase_value > 0 {df}
-        ''')
-        row = c.fetchone()
         stats = {
             "total_campaigns": total_campaigns,
             "total_reached":   total_reached,
-            "total_sales":     float(row['total_sales'] or 0),
-            "avg_roi":         float(row['avg_roi']     or 0)
+            "total_sales":     float(row.get('total_sales') or 0),
+            "avg_roi":         float(row.get('avg_roi')     or 0)
         }
         return stats
     except Exception as e:
         response.status = 500
         return {"detail": str(e)}
-    finally: conn.close()
 
 
 @app.route('/api/analytics/report', method='GET')
 def get_report():
-    """Serves analytics from SQLite cache (instant) — no live ClickHouse queries here."""
-    conn = get_db()
-    c = conn.cursor()
+    """Serves analytics from the ClickHouse campaign_dashboard_* tables - no heavy live invoice queries here."""
     try:
         df = get_period_filter_sql()
+        camp_base = f"FROM {ch_db.T_CAMP} WHERE source_db = '{ch_db.SRC}'"
         
         # ── Revenue trend: aggregate purchase_value per month from campaigns ──
-        c.execute(f'''
+        trend_rows = ch_db.query(f'''
             SELECT 
-                SUBSTR(start_date, 1, 7) || '-01' as date, 
-                SUM(purchase_value) as sales_value, 
-                SUM(purchase_count) as qty_sold
-            FROM campaigns
-            WHERE purchase_value > 0 {df}
-            GROUP BY SUBSTR(start_date, 1, 7)
-            ORDER BY SUBSTR(start_date, 1, 7) ASC
+                substring(start_date, 1, 7) AS ym,
+                concat(substring(start_date, 1, 7), '-01') AS date, 
+                sum(purchase_value) AS sales_value, 
+                sum(purchase_count) AS qty_sold
+            {camp_base} AND purchase_value > 0 {df}
+            GROUP BY ym
+            ORDER BY ym ASC
             LIMIT 30
         ''')
         trend = [{"date": r['date'], "sales_value": float(r['sales_value'] or 0), "qty_sold": int(r['qty_sold'] or 0)}
-                 for r in c.fetchall()]
+                 for r in trend_rows]
 
         # ── Top categories: aggregate from stored top_categories JSON ──
-        c.execute(f"SELECT top_categories FROM campaigns WHERE top_categories IS NOT NULL AND top_categories != '[]' {df}")
+        cat_rows = ch_db.query(f"SELECT top_categories {camp_base} AND top_categories != '' AND top_categories != '[]' {df}")
         cat_agg = {}
-        for row in c.fetchall():
+        for row in cat_rows:
             try:
                 cats = json.loads(row['top_categories'] or '[]')
                 for cat in cats:
@@ -1737,22 +1520,26 @@ def get_report():
                           key=lambda x: -x['sales_value'])[:5]
 
         # ── Top branches: collect per-campaign purchase_value grouped by store_name ──
-        c.execute(f'''
-            SELECT cc.store_name as branch, SUM(c.purchase_value) as val
-            FROM campaigns c
-            JOIN campaign_customers cc ON cc.campaign_id = c.id
-            WHERE c.purchase_value > 0 AND cc.store_name != '' AND cc.store_name != 'None' {get_period_filter_sql('c')}
+        branch_rows = ch_db.query(f'''
+            SELECT cc.store_name AS branch, sum(c.purchase_value) AS val
+            FROM {ch_db.T_CAMP} AS c
+            INNER JOIN (
+                SELECT DISTINCT campaign_id, store_name
+                FROM {ch_db.T_CUST}
+                WHERE source_db = '{ch_db.SRC}' AND store_name != '' AND store_name != 'None'
+            ) AS cc ON cc.campaign_id = c.id
+            WHERE c.source_db = '{ch_db.SRC}' AND c.purchase_value > 0 {get_period_filter_sql('c')}
             GROUP BY cc.store_name
             ORDER BY val DESC
             LIMIT 5
         ''')
-        branches = [{"branch": r['branch'], "sales_value": float(r['val'] or 0)} for r in c.fetchall()]
+        branches = [{"branch": r['branch'], "sales_value": float(r['val'] or 0)} for r in branch_rows]
 
         # ── Overall KPI from campaigns ──
-        c.execute(f'SELECT SUM(purchase_count) as cnt, SUM(purchase_value) as val FROM campaigns WHERE purchase_value > 0 {df}')
-        row = c.fetchone()
-        count = int(row['cnt'] or 0)
-        val   = float(row['val'] or 0)
+        kpi_rows = ch_db.query(f"SELECT sum(purchase_count) AS cnt, sum(purchase_value) AS val {camp_base} AND purchase_value > 0 {df}")
+        row = kpi_rows[0] if kpi_rows else {}
+        count = int(row.get('cnt') or 0)
+        val   = float(row.get('val') or 0)
 
         return {
             "kpi":     {"purchase_count": count, "purchase_value": val, "roi": 0},
@@ -1765,8 +1552,6 @@ def get_report():
     except Exception as e:
         response.status = 500
         return {"detail": str(e)}
-    finally:
-        conn.close()
 
 from bottle import static_file
 import threading

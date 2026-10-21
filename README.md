@@ -51,3 +51,19 @@ An automated Campaign Analytics & Attribution Dashboard designed for multi-store
    python backend/main.py
    ```
    The dashboard runs at `http://localhost:8000`.
+
+## Data storage (ClickHouse only)
+
+The dashboard no longer uses any local database. All of its state lives in four ClickHouse tables,
+accessed through `backend/ch_db.py`:
+
+| Table | Contents |
+|---|---|
+| `campaign_dashboard_campaigns` | campaigns and their KPIs |
+| `campaign_dashboard_campaign_customers` | audience (mobile numbers) per campaign |
+| `campaign_dashboard_billing` | billing rows (archived) |
+| `campaign_dashboard_config` | dashboard-wide values such as `total_audience_reached` |
+
+Every row has a `source_db` column; the live dashboard reads and writes only `source_db = 'root'`.
+Connection settings come from the `CH_URL`, `CH_USER` and `CH_PASS` environment variables.
+`backend/migrate_to_clickhouse.py` is the one-off script that copied the old SQLite data into these tables.
