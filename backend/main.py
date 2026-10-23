@@ -1633,17 +1633,30 @@ def api_sync_status():
 @app.route('/')
 def serve_index():
     frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'frontend')
-    return static_file('index.html', root=frontend_dir)
+    res = static_file('index.html', root=frontend_dir)
+    res.set_header('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0')
+    res.set_header('Pragma', 'no-cache')
+    res.set_header('Expires', '0')
+    return res
 
 @app.route('/store-sales')
 def serve_store_sales():
     frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'frontend')
-    return static_file('store-sales.html', root=frontend_dir)
+    res = static_file('store-sales.html', root=frontend_dir)
+    res.set_header('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0')
+    res.set_header('Pragma', 'no-cache')
+    res.set_header('Expires', '0')
+    return res
 
 @app.route('/<filepath:path>')
 def serve_static(filepath):
     frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'frontend')
-    return static_file(filepath, root=frontend_dir)
+    res = static_file(filepath, root=frontend_dir)
+    if filepath.endswith('.html'):
+        res.set_header('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0')
+        res.set_header('Pragma', 'no-cache')
+        res.set_header('Expires', '0')
+    return res
 
 from socketserver import ThreadingMixIn
 from wsgiref.simple_server import WSGIServer, make_server, WSGIRequestHandler
