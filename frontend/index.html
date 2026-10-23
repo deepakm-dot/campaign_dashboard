@@ -664,14 +664,30 @@
           <div class="card-body"><div style="height:220px;position:relative;"><canvas id="trendChart"></canvas></div></div>
         </div>
         <div class="card">
-          <div class="card-header"><div class="card-title">Channel Mix</div><div class="card-sub">Distribution by campaign mode</div></div>
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; padding:16px 20px; flex-wrap:wrap; gap:8px;">
+            <div>
+              <div class="card-title">Channel Mix</div>
+              <div class="card-sub">Distribution by campaign mode</div>
+            </div>
+            <select id="channel-month-filter" class="search-box" style="padding:5px 10px; font-size:12px; font-weight:600; width:auto; max-width:125px; cursor:pointer;" onchange="onChannelMonthChange(this.value)">
+              <option value="all">All Months</option>
+            </select>
+          </div>
           <div class="card-body">
             <div style="height:150px;position:relative;"><canvas id="channelChart"></canvas></div>
             <div class="donut-legend" id="channel-legend"></div>
           </div>
         </div>
         <div class="card">
-          <div class="card-header"><div class="card-title">Product Category Split</div><div class="card-sub">Sales from campaign customers</div></div>
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; padding:16px 20px; flex-wrap:wrap; gap:8px;">
+            <div>
+              <div class="card-title">Product Category Split</div>
+              <div class="card-sub">Sales from campaign customers</div>
+            </div>
+            <select id="category-month-filter" class="search-box" style="padding:5px 10px; font-size:12px; font-weight:600; width:auto; max-width:125px; cursor:pointer;" onchange="onCategoryMonthChange(this.value)">
+              <option value="all">All Months</option>
+            </select>
+          </div>
           <div class="card-body">
             <div style="height:150px;position:relative;"><canvas id="overviewCatChart"></canvas></div>
             <div class="donut-legend" id="overview-cat-legend"></div>
@@ -749,6 +765,7 @@
 /* ---- STATE ---- */
 let allCamps = [], filterMode = 'all', filterMonth = 'all';
 let _currentGlobalPeriod = 'all';
+let _currentChannelMonth = 'all', _currentCategoryMonth = 'all';
 let charts = {};
 let _ssCache = {}, _ssLiftCache = {};
 let currentStoreSalesId = 731;
@@ -757,6 +774,8 @@ let _drawerSelectedBaseStart = '';
 function applyGlobalFilter() {
   const el = document.getElementById('global-date-filter');
   if (el) _currentGlobalPeriod = el.value;
+  _currentChannelMonth = 'all';
+  _currentCategoryMonth = 'all';
   loadAll();
 }
 
@@ -856,31 +875,90 @@ async function loadAll(){
     document.getElementById('kv-rev-sub').innerHTML = `Verified via ClickHouse &bull; Exact: &#x20B9;${exactRev}`;
 
     buildTrend(report.trend||[]);
-    buildChannel(allCamps);
-    buildCategorySplit(report.products||[], 'overviewCatChart', 'overview-cat-legend');
-    buildChannelStats(allCamps);
     buildMonthFilter(allCamps);
+    
+    // Channel Mix & Channel Stats (respecting selected month)
+    let chCamps = allCamps;
+    if (_currentChannelMonth !== 'all') {
+      chCamps = chCamps.filter(c => getCampMonth(c) === _currentChannelMonth);
+    }
+    buildChannel(chCamps);
+    buildChannelStats(chCamps);
+
+    // Product Category Split (respecting selected month)
+    renderCategorySplitForMonth(_currentCategoryMonth);
+
     buildTopGroupFilter();
     buildTopTable();
     buildGroupGrid();
   } catch(e){ console.error(e); }
 }
 
+function getCampMonth(c) {
+  if (!c || !c.start_date) return '';
+  const parts = c.start_date.split('-');
+  if (parts.length === 3) {
+    const y = parts[2].length === 4 ? parts[2] : parts[0];
+    const mo = parts[1];
+    return `${y}-${mo}`;
+  }
+  return '';
+}
+
+function onChannelMonthChange(val) {
+  _currentChannelMonth = val;
+  let camps = allCamps;
+  if (val !== 'all') {
+    camps = camps.filter(c => getCampMonth(c) === val);
+  }
+  buildChannel(camps);
+  buildChannelStats(camps);
+}
+
+function onCategoryMonthChange(val) {
+  _currentCategoryMonth = val;
+  renderCategorySplitForMonth(val);
+}
+
+function renderCategorySplitForMonth(month = 'all') {
+  let camps = allCamps;
+  if (month !== 'all') {
+    camps = camps.filter(c => getCampMonth(c) === month);
+  }
+  
+  const catAgg = {};
+  camps.forEach(c => {
+    const cats = c.top_categories || [];
+    cats.forEach(cat => {
+      const k = cat.category;
+      if (k) {
+        catAgg[k] = (catAgg[k] || 0) + (Number(cat.revenue) || 0);
+      }
+    });
+  });
+  
+  const products = Object.keys(catAgg).map(k => ({
+    category: k,
+    sales_value: catAgg[k],
+    qty_sold: 0
+  })).sort((a, b) => b.sales_value - a.sales_value).slice(0, 5);
+  
+  buildCategorySplit(products, 'overviewCatChart', 'overview-cat-legend');
+}
+
 function buildMonthFilter(camps) {
   const select = document.getElementById('month-filter');
   const topSelect = document.getElementById('top-month-filter');
+  const chSelect = document.getElementById('channel-month-filter');
+  const catSelect = document.getElementById('category-month-filter');
   const current = select ? select.value : 'all';
   const topCurrent = topSelect ? topSelect.value : 'all';
+  const chCurrent = chSelect ? chSelect.value : _currentChannelMonth;
+  const catCurrent = catSelect ? catSelect.value : _currentCategoryMonth;
   const months = new Set();
   camps.forEach(c => {
-    if(c.start_date) {
-      const parts = c.start_date.split('-');
-      if(parts.length === 3) {
-        let y = parts[2].length === 4 ? parts[2] : parts[0];
-        let mo = parts[1];
-        months.add(`${y}-${mo}`);
-      }
-    }
+    const m = getCampMonth(c);
+    if(m) months.add(m);
   });
   const sorted = Array.from(months).sort((a,b) => b.localeCompare(a));
   const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -899,6 +977,16 @@ function buildMonthFilter(camps) {
   if (topSelect) {
     topSelect.innerHTML = html;
     topSelect.value = sorted.includes(topCurrent) ? topCurrent : 'all';
+  }
+
+  if (chSelect) {
+    chSelect.innerHTML = html;
+    chSelect.value = sorted.includes(chCurrent) ? chCurrent : 'all';
+  }
+
+  if (catSelect) {
+    catSelect.innerHTML = html;
+    catSelect.value = sorted.includes(catCurrent) ? catCurrent : 'all';
   }
 }
 
@@ -985,17 +1073,27 @@ function buildChannel(camps){
   const cnt={};
   camps.forEach(c=>{ const t=c.type||'Other'; cnt[t]=(cnt[t]||0)+1; });
   const labels=Object.keys(cnt), data=Object.values(cnt), total=data.reduce((a,b)=>a+b,0);
+  const legEl = document.getElementById('channel-legend');
+  
+  if(!labels.length || total === 0) {
+    if(charts['channelChart']) charts['channelChart'].destroy();
+    if(legEl) legEl.innerHTML = `<div style="text-align:center;padding:24px 0;color:var(--muted);font-size:12px;">No campaigns for this month</div>`;
+    return;
+  }
+
   mkChart('channelChart',{
     type:'doughnut',
     data:{labels, datasets:[{data, backgroundColor:CLR, borderWidth:0, hoverOffset:4}]},
     options:{ responsive:true, maintainAspectRatio:false, cutout:'68%',
       plugins:{ legend:{display:false}, tooltip:{backgroundColor:'#ffffff',titleColor:'#0f172a',bodyColor:'#64748b',borderColor:'#e2e8f0',borderWidth:1} } }
   });
-  document.getElementById('channel-legend').innerHTML = labels.map((l,i)=>`
-    <div class="legend-row">
-      <div class="legend-left"><div class="legend-dot" style="background:${CLR[i]}"></div><span>${l}</span></div>
-      <span class="legend-val" style="color:${CLR[i]}">${data[i]} <span style="color:var(--muted);font-weight:400;">(${((data[i]/total)*100).toFixed(0)}%)</span></span>
-    </div>`).join('');
+  if(legEl) {
+    legEl.innerHTML = labels.map((l,i)=>`
+      <div class="legend-row">
+        <div class="legend-left"><div class="legend-dot" style="background:${CLR[i]}"></div><span>${l}</span></div>
+        <span class="legend-val" style="color:${CLR[i]}">${data[i]} <span style="color:var(--muted);font-weight:400;">(${((data[i]/total)*100).toFixed(0)}%)</span></span>
+      </div>`).join('');
+  }
 }
 
 /* ---- CATEGORY DONUT ---- */
@@ -1004,6 +1102,15 @@ function buildCategorySplit(products, chartId='overviewCatChart', legendId='over
   const legEl = document.getElementById(legendId);
   if (!el) return;
   const cats = (products || []).slice(0, 5);
+
+  if (!cats.length || cats.every(c => (Number(c.sales_value) || 0) === 0)) {
+    if (charts[chartId]) charts[chartId].destroy();
+    if (legEl) {
+      legEl.innerHTML = `<div style="text-align:center;padding:24px 0;color:var(--muted);font-size:12px;">No category sales for this month</div>`;
+    }
+    return;
+  }
+
   mkChart(chartId, {
     type: 'doughnut',
     data: {
@@ -1046,6 +1153,12 @@ function buildChannelStats(camps){
   const cnt={}, rev={};
   camps.forEach(c=>{ const t=c.type||'Other'; cnt[t]=(cnt[t]||0)+1; rev[t]=(rev[t]||0)+(Number(c.purchase_value)||0); });
   const allTypes = Object.keys(cnt).sort((a,b) => (cnt[b] - cnt[a]) || (rev[b] - rev[a]));
+  const statEl = document.getElementById('channel-stats');
+  if(!statEl) return;
+  if(!allTypes.length) {
+    statEl.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:28px;color:var(--muted);background:var(--card);border:1px solid var(--border);border-radius:14px;font-size:13px;font-weight:500;">No campaign channel data for this month</div>`;
+    return;
+  }
 
   const META = {
     SMS:                { icon:'💬', cls:'ch-card-sms', color:'#4f46e5', grad:'linear-gradient(90deg,#6366f1,#818cf8)' },
@@ -1086,7 +1199,7 @@ function buildChannelStats(camps){
     return { icon:'📣', cls:'ch-card-sms', color:'#4f46e5', grad:'linear-gradient(90deg,#6366f1,#818cf8)' };
   }
 
-  document.getElementById('channel-stats').innerHTML = allTypes.map(t=>{
+  statEl.innerHTML = allTypes.map(t=>{
     const m = getChannelMeta(t);
     const hasRev = rev[t] > 0;
     return `
