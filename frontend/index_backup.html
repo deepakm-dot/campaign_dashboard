@@ -94,6 +94,14 @@
 
     /* CHART ROWS */
     .row2 { display:grid; grid-template-columns:1fr 360px; gap:16px; margin-bottom:24px; }
+    .charts-row-3 { display:grid; grid-template-columns:1.25fr 1fr 1fr; gap:16px; margin-bottom:24px; }
+    @media (max-width: 1200px) {
+      .charts-row-3 { grid-template-columns: repeat(2, 1fr); }
+      .charts-row-3 > .card-trend { grid-column: 1 / -1; }
+    }
+    @media (max-width: 768px) {
+      .charts-row-3 { grid-template-columns: 1fr; }
+    }
     .row3 { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; }
     @media (max-width: 1100px) {
       .row3 { grid-template-columns: repeat(2, 1fr); }
@@ -576,7 +584,7 @@
   <!-- SIDEBAR -->
   <aside class="sidebar">
     <div class="sidebar-logo">
-      <div class="logo-icon">&#x1F4CA;</div>
+      <img src="/logo.png" alt="myG FUTURE" style="max-height:45px; width:auto; display:block;" />
       <div>
         <div class="logo-text">Campaign Analytics</div>
         <div class="logo-sub">Intelligence Platform</div>
@@ -602,7 +610,7 @@
         <div class="pulse"></div>
         <div>
           <div style="font-size:11px;font-weight:700;">Auto-Sync Active</div>
-          <div style="font-size:10px;opacity:0.7;">Refreshes every 15 min</div>
+          <div style="font-size:10px;opacity:0.8;color:#059669;">Live Sync (Every 45s)</div>
         </div>
       </div>
     </div>
@@ -647,11 +655,11 @@
       <div class="kpi-grid">
         <div class="kpi-card c1 fu fu1"><div class="kpi-icon">&#x1F3AF;</div><div class="kpi-label">Total Campaigns</div><div class="kpi-value" id="kv-camps">&#x2014;</div><div class="kpi-sub">Synced from Google Sheets</div></div>
         <div class="kpi-card c2 fu fu2"><div class="kpi-icon">&#x1F465;</div><div class="kpi-label">Audience Reached</div><div class="kpi-value" id="kv-reach">&#x2014;</div><div class="kpi-sub">Total customer targets</div></div>
-        <div class="kpi-card c3 fu fu3"><div class="kpi-icon">&#x1F4B0;</div><div class="kpi-label">Total Revenue</div><div class="kpi-value" id="kv-rev">&#x2014;</div><div class="kpi-sub">Verified via ClickHouse</div></div>
+        <div class="kpi-card c3 fu fu3"><div class="kpi-icon">&#x1F4B0;</div><div class="kpi-label">Total Revenue</div><div class="kpi-value" id="kv-rev">&#x2014;</div><div class="kpi-sub" id="kv-rev-sub">Verified via ClickHouse</div></div>
       </div>
 
-      <div class="row2 fu fu2">
-        <div class="card">
+      <div class="charts-row-3 fu fu2">
+        <div class="card card-trend">
           <div class="card-header"><div class="card-title">Revenue Trend</div><div class="card-sub">Monthly sales value from campaign customers</div></div>
           <div class="card-body"><div style="height:220px;position:relative;"><canvas id="trendChart"></canvas></div></div>
         </div>
@@ -662,12 +670,39 @@
             <div class="donut-legend" id="channel-legend"></div>
           </div>
         </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Product Category Split</div><div class="card-sub">Sales from campaign customers</div></div>
+          <div class="card-body">
+            <div style="height:150px;position:relative;"><canvas id="overviewCatChart"></canvas></div>
+            <div class="donut-legend" id="overview-cat-legend"></div>
+          </div>
+        </div>
       </div>
 
       <div class="row3 fu fu3" id="channel-stats"></div>
 
       <div class="card fu fu4">
-        <div class="card-header"><div class="card-title">Top Campaigns by Revenue</div><div class="card-sub">Campaigns with verified ClickHouse purchase data</div></div>
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; flex-wrap: wrap; gap: 12px;">
+          <div>
+            <div class="card-title">Top Campaigns by Revenue</div>
+            <div class="card-sub">Campaigns with verified ClickHouse purchase data</div>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <select id="top-month-filter" class="search-box" style="padding: 7px 12px; width: auto; cursor: pointer;" onchange="onTopMonthChange()">
+              <option value="all">All Months</option>
+            </select>
+            <select id="top-group-filter" class="search-box" style="padding: 7px 12px; width: auto; max-width: 250px; cursor: pointer;" onchange="buildTopTable()">
+              <option value="all">All Campaign Groups</option>
+            </select>
+            <select id="top-store-filter" class="search-box" style="padding: 7px 12px; width: auto; cursor: pointer;" onchange="buildTopTable()">
+              <option value="all">All Stores</option>
+              <option value="top5_future">Top 5 Future Stores</option>
+              <option value="least5_future">Least 5 Future Stores</option>
+              <option value="top5_normal">Top 5 Normal Stores</option>
+              <option value="least5_normal">Least 5 Normal Stores</option>
+            </select>
+          </div>
+        </div>
         <div class="table-wrap">
           <table>
             <thead><tr><th>Campaign</th><th>Mode</th><th>Period</th><th>Targets</th><th>Purchases</th><th>Revenue</th><th>Conv %</th><th>ROI</th><th>Actual Cost</th></tr></thead>
@@ -715,6 +750,9 @@
 let allCamps = [], filterMode = 'all', filterMonth = 'all';
 let _currentGlobalPeriod = 'all';
 let charts = {};
+let _ssCache = {}, _ssLiftCache = {};
+let currentStoreSalesId = 731;
+let _drawerSelectedBaseStart = '';
 
 function applyGlobalFilter() {
   const el = document.getElementById('global-date-filter');
@@ -754,11 +792,18 @@ function inrExact(v){
 }
 function num(v){
   v=Number(v)||0;
-  if(v>=1e6) return (v/1e6).toFixed(1)+'M';
+  if(v>=1e7) return (v/1e7).toFixed(2)+'Cr';
+  if(v>=1e5) return (v/1e5).toFixed(1)+'L';
   if(v>=1e3) return (v/1e3).toFixed(1)+'K';
   return ''+v;
 }
-function pct(v){ return (Number(v)||0).toFixed(1)+'%'; }
+function pct(v){
+  const n = Number(v) || 0;
+  if (n === 0) return '0.0%';
+  if (n < 0.01) return n.toFixed(3) + '%';
+  if (n < 1) return n.toFixed(2) + '%';
+  return n.toFixed(1) + '%';
+}
 
 function modeBadge(t){
   const m={SMS:'b-sms',Whatsapp:'b-wa',WhatsApp:'b-wa',RCS:'b-rcs',VoiceOver:'b-voice'};
@@ -792,6 +837,8 @@ function mkChart(id, cfg){
 /* ---- LOAD ALL ---- */
 async function loadAll(){
   try{
+    _ssCache = {};
+    _ssLiftCache = {};
     const q = _currentGlobalPeriod !== 'all' ? `?period=${_currentGlobalPeriod}` : '';
     const [stats, camps, report] = await Promise.all([
       fetch('/api/dashboard/stats' + q).then(r=>r.json()),
@@ -803,20 +850,27 @@ async function loadAll(){
     counter(document.getElementById('kv-camps'), stats.total_campaigns||0, v => Math.round(v));
     counter(document.getElementById('kv-reach'), stats.total_reached||0, v => num(Math.round(v)));
     counter(document.getElementById('kv-rev'),   stats.total_sales||0, inr);
+    
+    // Add exact numerical revenue in small text
+    const exactRev = Math.round(stats.total_sales||0).toLocaleString('en-IN');
+    document.getElementById('kv-rev-sub').innerHTML = `Verified via ClickHouse &bull; Exact: &#x20B9;${exactRev}`;
 
     buildTrend(report.trend||[]);
     buildChannel(allCamps);
+    buildCategorySplit(report.products||[], 'overviewCatChart', 'overview-cat-legend');
     buildChannelStats(allCamps);
-    buildTopTable();
     buildMonthFilter(allCamps);
+    buildTopGroupFilter();
+    buildTopTable();
     buildGroupGrid();
   } catch(e){ console.error(e); }
 }
 
 function buildMonthFilter(camps) {
   const select = document.getElementById('month-filter');
-  if (!select) return;
-  const current = select.value;
+  const topSelect = document.getElementById('top-month-filter');
+  const current = select ? select.value : 'all';
+  const topCurrent = topSelect ? topSelect.value : 'all';
   const months = new Set();
   camps.forEach(c => {
     if(c.start_date) {
@@ -836,8 +890,69 @@ function buildMonthFilter(camps) {
     const name = MONTH_NAMES[parseInt(mo, 10) - 1] + ' ' + y;
     html += `<option value="${m}">${name}</option>`;
   });
-  select.innerHTML = html;
-  select.value = sorted.includes(current) ? current : 'all';
+  
+  if (select) {
+    select.innerHTML = html;
+    select.value = sorted.includes(current) ? current : 'all';
+  }
+  
+  if (topSelect) {
+    topSelect.innerHTML = html;
+    topSelect.value = sorted.includes(topCurrent) ? topCurrent : 'all';
+  }
+}
+
+function buildTopGroupFilter() {
+  const select = document.getElementById('top-group-filter');
+  if (!select) return;
+  const currentVal = select.value || 'all';
+  const monthFilter = document.getElementById('top-month-filter')?.value || 'all';
+
+  let camps = allCamps;
+  if (monthFilter !== 'all') {
+    camps = camps.filter(c => {
+      if (!c.start_date) return false;
+      const parts = c.start_date.split('-');
+      if (parts.length === 3) {
+        let y = parts[2].length === 4 ? parts[2] : parts[0];
+        let mo = parts[1];
+        return `${y}-${mo}` === monthFilter;
+      }
+      return false;
+    });
+  }
+
+  const groups = new Set();
+  camps.forEach(c => {
+    const g = (c.campaign_group || '').trim();
+    if (g && g !== 'None' && g !== 'null') groups.add(g);
+  });
+
+  const sortedGroups = Array.from(groups).sort((a, b) => a.localeCompare(b));
+  
+  select.innerHTML = '';
+  const defaultOpt = document.createElement('option');
+  defaultOpt.value = 'all';
+  defaultOpt.textContent = 'All Campaign Groups';
+  select.appendChild(defaultOpt);
+
+  sortedGroups.forEach(g => {
+    const opt = document.createElement('option');
+    opt.value = g;
+    opt.textContent = g;
+    select.appendChild(opt);
+  });
+
+  if (sortedGroups.includes(currentVal)) {
+    select.value = currentVal;
+  } else {
+    select.value = 'all';
+  }
+}
+
+function onTopMonthChange() {
+  buildTopGroupFilter();
+  buildTopTable();
 }
 
 /* ---- TREND CHART ---- */
@@ -881,6 +996,49 @@ function buildChannel(camps){
       <div class="legend-left"><div class="legend-dot" style="background:${CLR[i]}"></div><span>${l}</span></div>
       <span class="legend-val" style="color:${CLR[i]}">${data[i]} <span style="color:var(--muted);font-weight:400;">(${((data[i]/total)*100).toFixed(0)}%)</span></span>
     </div>`).join('');
+}
+
+/* ---- CATEGORY DONUT ---- */
+function buildCategorySplit(products, chartId='overviewCatChart', legendId='overview-cat-legend'){
+  const el = document.getElementById(chartId);
+  const legEl = document.getElementById(legendId);
+  if (!el) return;
+  const cats = (products || []).slice(0, 5);
+  mkChart(chartId, {
+    type: 'doughnut',
+    data: {
+      labels: cats.map(c => c.category),
+      datasets: [{
+        data: cats.map(c => Number(c.sales_value) || 0),
+        backgroundColor: CLR,
+        borderWidth: 0,
+        hoverOffset: 4
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '65%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#ffffff',
+          titleColor: '#0f172a',
+          bodyColor: '#64748b',
+          borderColor: '#e2e8f0',
+          borderWidth: 1,
+          callbacks: { label: c => ' ' + inr(c.raw) }
+        }
+      }
+    }
+  });
+  if (legEl) {
+    legEl.innerHTML = cats.map((c, i) => `
+      <div class="legend-row">
+        <div class="legend-left"><div class="legend-dot" style="background:${CLR[i]}"></div><span>${c.category}</span></div>
+        <span class="legend-val" style="color:${CLR[i]}">${inr(c.sales_value)}</span>
+      </div>`).join('');
+  }
 }
 
 /* ---- CHANNEL STATS ---- */
@@ -945,8 +1103,63 @@ function buildChannelStats(camps){
 
 /* ---- TOP TABLE ---- */
 function buildTopTable(){
-  const top=[...allCamps].filter(c=>Number(c.purchase_value)>0).sort((a,b)=>Number(b.purchase_value)-Number(a.purchase_value)).slice(0,10);
-  const tbody=document.getElementById('top-table');
+  let list = [...allCamps].filter(c=>Number(c.purchase_value)>0);
+  
+  // Apply Month Filter
+  const monthFilter = document.getElementById('top-month-filter')?.value || 'all';
+  if(monthFilter !== 'all') {
+    list = list.filter(c => {
+      if(!c.start_date) return false;
+      const parts = c.start_date.split('-');
+      if(parts.length === 3) {
+        let y = parts[2].length === 4 ? parts[2] : parts[0];
+        let mo = parts[1];
+        return `${y}-${mo}` === monthFilter;
+      }
+      return false;
+    });
+  }
+
+  // Apply Campaign Group Filter
+  const groupFilter = document.getElementById('top-group-filter')?.value || 'all';
+  if (groupFilter !== 'all') {
+    list = list.filter(c => ((c.campaign_group || '').trim()) === groupFilter);
+  }
+
+  // Apply Store Filter
+  const storeFilter = document.getElementById('top-store-filter')?.value || 'all';
+  if(storeFilter !== 'all') {
+    // A future store has 'future' in its campaign/store name.
+    const isFutureStore = (name) => (name||'').toLowerCase().includes('future');
+    
+    // Group total revenue by store name across the filtered timeframe
+    const storeRevs = {};
+    list.forEach(c => {
+      const name = c.campaign_name || 'Unknown';
+      if(!storeRevs[name]) storeRevs[name] = 0;
+      storeRevs[name] += Number(c.purchase_value) || 0;
+    });
+    
+    const storeNames = Object.keys(storeRevs);
+    let targetStores = [];
+    
+    if(storeFilter.includes('_future')) {
+      const futureStores = storeNames.filter(isFutureStore);
+      futureStores.sort((a,b) => storeRevs[b] - storeRevs[a]);
+      if(storeFilter === 'top5_future') targetStores = futureStores.slice(0, 5);
+      else targetStores = futureStores.slice(-5);
+    } else if(storeFilter.includes('_normal')) {
+      const normalStores = storeNames.filter(s => !isFutureStore(s) && !(s||'').toLowerCase().includes('all kerala'));
+      normalStores.sort((a,b) => storeRevs[b] - storeRevs[a]);
+      if(storeFilter === 'top5_normal') targetStores = normalStores.slice(0, 5);
+      else targetStores = normalStores.slice(-5);
+    }
+    
+    list = list.filter(c => targetStores.includes(c.campaign_name));
+  }
+
+  const top = list.sort((a,b)=>Number(b.purchase_value)-Number(a.purchase_value)).slice(0,10);
+  const tbody = document.getElementById('top-table');
   if(!top.length){ tbody.innerHTML=`<tr><td colspan="9" style="text-align:center;padding:48px;color:var(--muted);">No revenue data yet &mdash; sync processing&hellip;</td></tr>`; return; }
   const maxR=Math.max(...top.map(c=>Number(c.purchase_value)));
   tbody.innerHTML=top.map(c=>{
@@ -960,7 +1173,7 @@ function buildTopTable(){
       <td style="font-size:11px;color:var(--muted);">${period}</td>
       <td style="font-weight:600;">${num(c.target_size)}</td>
       <td style="font-weight:600;">${num(c.purchase_count)}</td>
-      <td style="font-weight:700;color:#67e8f9;">${inr(rev)}</td>
+      <td style="font-weight:700;color:#059669;">${inr(rev)}</td>
       <td style="color:var(--muted);">${pct(c.conversion_rate)}</td>
       <td>${roiTag(c.roi)}</td>
       <td style="font-weight:600;">${inr(actualCost)}</td>
@@ -1034,12 +1247,30 @@ function buildGroupGrid(){
     return;
   }
 
+  groupNames.sort((a, b) => {
+    if(a === 'Ungrouped') return 1;
+    if(b === 'Ungrouped') return -1;
+    function parseD(dstr) {
+      if(!dstr) return 99999999;
+      const p = dstr.split('-');
+      if(p.length !== 3) return 99999999;
+      const y = p[2].length === 4 ? p[2] : p[0];
+      const m = p[1].padStart(2, '0');
+      const d = p[2].length === 4 ? p[0].padStart(2, '0') : p[2].padStart(2, '0');
+      return parseInt(y + m + d, 10);
+    }
+    const minA = Math.min(...grouped[a].map(c => parseD(c.start_date)));
+    const minB = Math.min(...grouped[b].map(c => parseD(c.start_date)));
+    return minA - minB;
+  });
+
   container.innerHTML = groupNames.map((g, idx)=>{
     const camps = grouped[g];
     const col = GROUP_COLORS[idx % GROUP_COLORS.length];
     const modes = [...new Set(camps.map(c=>c.type).filter(Boolean))];
     const totalTargets = camps.reduce((s,c)=>s+(Number(c.target_size)||0),0);
     const totalRev = camps.reduce((s,c)=>s+(Number(c.purchase_value)||0),0);
+    const totalPurchases = camps.reduce((s,c)=>s+(Number(c.purchase_count)||0),0);
     const cardId = 'grp-'+idx;
 
     const modeTagsHtml = modes.slice(0,3).map(m=>modeBadge(m)).join('');
@@ -1059,9 +1290,7 @@ function buildGroupGrid(){
       const roiHtml = `<div class="camp-stat-num" style="color:#d97706">${(Number(c.roi) || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</div>`;
       const convHtml = `<div class="camp-stat-num" style="color:#64748b">${pct(c.conversion_rate || 0)}</div>`;
 
-      const isStoreCamp = (c.campaign_name || '').toLowerCase().includes('paravoor') ||
-                          (c.campaign_name || '').toLowerCase().includes('vypin') ||
-                          Boolean(c.branch_code);
+      const isStoreCamp = Boolean(c.id);
 
       const storeBadgeHtml = isStoreCamp
         ? `<span class="camp-store-pill" onclick="event.stopPropagation(); openStoreSales(${c.id})" title="Click to view all store product sales for this campaign period">
@@ -1076,6 +1305,7 @@ function buildGroupGrid(){
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:5px;flex-wrap:wrap;">
               <div class="camp-row-name">${c.campaign_name}</div>
               ${storeBadgeHtml}
+              ${c.data_source ? `<span style="font-size:10px; font-weight:700; color:#475569; background:#f1f5f9; padding:3px 8px; border-radius:12px; border:1px solid #cbd5e1; white-space:nowrap;">${c.data_source}</span>` : ''}
             </div>
             <div class="camp-row-meta">
               ${modeBadge(c.type)}
@@ -1103,6 +1333,27 @@ function buildGroupGrid(){
         </div>`;
     }).join('');
 
+    const totalsRowHtml = `
+      <div class="camp-row" style="background:#f8fafc; border: 1px dashed #cbd5e1; cursor:default; margin-top:8px;">
+        <div class="camp-row-left">
+          <div class="camp-row-name" style="color:var(--text); font-weight:800;">TOTALS</div>
+        </div>
+        <div class="camp-row-stats">
+          <div class="camp-stat-block">
+            <div class="camp-stat-lbl">Purchases</div>
+            <div class="camp-stat-num" style="color:#4f46e5;font-weight:900;">${(totalPurchases||0).toLocaleString('en-IN')}</div>
+          </div>
+          <div class="camp-stat-block">
+            <div class="camp-stat-lbl">Revenue</div>
+            <div class="camp-stat-num" style="color:#059669;font-weight:900;">${inr(totalRev)}</div>
+          </div>
+          <div class="camp-stat-block"></div>
+          <div class="camp-stat-block"></div>
+        </div>
+      </div>`;
+
+    const finalItemsHtml = campItemsHtml + (camps.length > 0 ? totalsRowHtml : '');
+
     let displayTitle = g;
     let displayDate = "";
     const monthRegex = /\b(January|February|March|April|May|June|July|August|September|October|November|December)\b/i;
@@ -1126,7 +1377,7 @@ function buildGroupGrid(){
         </div>
         <div class="group-body">
           <div style="border-left:3px solid ${col.accent};padding-left:16px;">
-            ${campItemsHtml}
+            ${finalItemsHtml}
           </div>
         </div>
       </div>`;
@@ -1147,18 +1398,7 @@ async function loadPerf(){
         scales:{ x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{callback:v=>inr(v),font:{size:11}}}, y:{grid:{display:false},ticks:{font:{size:11}}} }
       }
     });
-    const cats=(r.products||[]).slice(0,5);
-    mkChart('catChart',{
-      type:'doughnut',
-      data:{ labels:cats.map(c=>c.category), datasets:[{data:cats.map(c=>Number(c.sales_value)||0), backgroundColor:CLR, borderWidth:0, hoverOffset:4}] },
-      options:{ responsive:true, maintainAspectRatio:false, cutout:'65%',
-        plugins:{ legend:{display:false}, tooltip:{backgroundColor:'#ffffff',callbacks:{label:c=>' '+inr(c.raw)}} } }
-    });
-    document.getElementById('cat-legend').innerHTML=cats.map((c,i)=>`
-      <div class="legend-row">
-        <div class="legend-left"><div class="legend-dot" style="background:${CLR[i]}"></div><span>${c.category}</span></div>
-        <span class="legend-val" style="color:${CLR[i]}">${inr(c.sales_value)}</span>
-      </div>`).join('');
+    buildCategorySplit(r.products||[], 'catChart', 'cat-legend');
   } catch(e){ console.error(e); }
 }
 
@@ -1176,9 +1416,21 @@ const PROD_META = {
   'Others':          { icon:'📦', color:'#64748b', bg:'rgba(100,116,139,0.08)', bar:'#94a3b8',  cardBefore:'linear-gradient(90deg,#64748b,#94a3b8)' },
 };
 
-const _ssCache = {};
-const _ssLiftCache = {};
-let currentStoreSalesId = 731;
+function updateDrawerBaselineDate(val) {
+  _drawerSelectedBaseStart = val;
+  const url = `/api/campaign/${currentStoreSalesId}/incremental-lift` + (val ? `?base_start=${val}` : '');
+  
+  const content = document.getElementById('ss-content-wrap');
+  if(content) content.style.opacity = '0.5';
+  
+  fetch(url).then(r => r.json()).then(liftData => {
+    renderStoreSales(_ssCache[currentStoreSalesId], liftData);
+    if(content) content.style.opacity = '1';
+  }).catch(err => {
+    console.error(err);
+    if(content) content.style.opacity = '1';
+  });
+}
 
 function closeStoreSales() {
   const ov = document.getElementById('ss-overlay');
@@ -1298,8 +1550,14 @@ function buildIncrementalLiftHtml(liftData) {
       <!-- Comparison Table -->
       <div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;background:#ffffff">
         <div style="padding:10px 14px;background:#f8fafc;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between">
-          <span style="font-size:12px;font-weight:700;color:#0f172a">Day-by-Day Incremental Comparison Audit</span>
-          <span style="font-size:11px;color:#64748b">Normalized day-of-week analysis</span>
+          <div>
+            <div style="font-size:12px;font-weight:700;color:#0f172a">Day-by-Day Incremental Comparison Audit</div>
+            <span style="font-size:11px;color:#64748b">Normalized day-of-week analysis</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label style="font-size:11px; font-weight:600; color:#64748b;">Baseline Start Date:</label>
+            <input type="date" value="${_drawerSelectedBaseStart}" onchange="updateDrawerBaselineDate(this.value)" style="padding:4px 8px; border:1px solid #e2e8f0; border-radius:6px; font-size:12px; outline:none; background:#ffffff; color:#0f172a; cursor:pointer;">
+          </div>
         </div>
         <div class="table-wrap">
           <table style="width:100%;border-collapse:collapse;font-size:12px">
@@ -1335,13 +1593,15 @@ function buildIncrementalLiftHtml(liftData) {
   `;
 }
 
-function openStoreSales(campaignId) {
+function openStoreSales(campaignId, forceFresh = false) {
   currentStoreSalesId = campaignId;
+  _drawerSelectedBaseStart = '';
+  
   const ov = document.getElementById('ss-overlay');
   ov.classList.add('open');
   document.body.style.overflow = 'hidden';
 
-  if (_ssCache[campaignId]) {
+  if (!forceFresh && _ssCache[campaignId] && (_ssCache[campaignId].campaign_revenue > 0 || _ssCache[campaignId].campaign_purchases > 0)) {
     renderStoreSales(_ssCache[campaignId], _ssLiftCache[campaignId]);
     return;
   }
@@ -1359,7 +1619,7 @@ function openStoreSales(campaignId) {
 
   Promise.all([
     fetch(`/api/campaign/${campaignId}/store-sales`).then(r => r.json()),
-    fetch(`/api/campaign/${campaignId}/incremental-lift`).then(r => r.json()).catch(() => null)
+    fetch(`/api/campaign/${campaignId}/incremental-lift` + (_drawerSelectedBaseStart ? `?base_start=${_drawerSelectedBaseStart}` : '')).then(r => r.json()).catch(() => null)
   ])
   .then(([data, liftData]) => {
     _ssCache[campaignId] = data;
@@ -1406,7 +1666,25 @@ function renderStoreSales(data, liftData) {
   const retStr = data.returns_amount ? `-₹${Math.round(Math.abs(data.returns_amount)).toLocaleString('en-IN')}` : '₹0';
   const exchStr = data.exchanges_amount ? `-₹${Math.round(Math.abs(data.exchanges_amount)).toLocaleString('en-IN')}` : '₹0';
 
+  let chErrorBanner = '';
+  if (data.clickhouse_error) {
+    chErrorBanner = `
+      <div style="background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;padding:12px 16px;border-radius:12px;margin-bottom:16px;font-size:13px;display:flex;align-items:flex-start;gap:12px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+        <span style="font-size:20px;line-height:1">⚠️</span>
+        <div style="flex:1">
+          <div style="font-weight:700;font-size:14px;color:#881337">ClickHouse Cloud Notice</div>
+          <div style="margin-top:2px;font-family:monospace;font-size:12px;background:#ffe4e6;padding:4px 8px;border-radius:6px">${data.clickhouse_error}</div>
+          <div style="margin-top:6px;font-size:12px;color:#be123c">
+            If this error indicates HTTP 403 Forbidden or connection timeout, Render's cloud servers need IP access:
+            <strong>ClickHouse Cloud Console &rarr; Security &rarr; IP Access List &rarr; Add <code>0.0.0.0/0</code></strong>.
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   const recBannerHtml = `
+    ${chErrorBanner}
     <!-- Revenue Attribution & Store Customers Breakdown -->
     <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(400px, 1fr)); gap:16px; margin-bottom:20px;">
       
@@ -1741,7 +2019,7 @@ function openBrandBreakdown(productName) {
   }
 
   const cacheKey = `${currentStoreSalesId}_${productName}`;
-  if (_ssBrandCache[cacheKey]) {
+  if (_ssBrandCache[cacheKey] && _ssBrandCache[cacheKey].brands && _ssBrandCache[cacheKey].brands.length > 0) {
     renderBrandDataView(_ssBrandCache[cacheKey], m, productName);
     return;
   }
@@ -1967,6 +2245,29 @@ function showToast(msg, type = 'info') {
   }, 4000);
 }
 
+let _lastKnownSync = null;
+async function autoCheckSync() {
+  try {
+    const res = await fetch('/api/sync/status');
+    const data = await res.json();
+    if (data && data.last_sync) {
+      if (_lastKnownSync && _lastKnownSync !== data.last_sync) {
+        console.log('[AUTO-SYNC] Background sync finished at:', data.last_sync);
+        showToast('Dashboard auto-updated with latest sync data', 'success');
+        _ssCache = {};
+        _ssLiftCache = {};
+        loadAll();
+        if (currentStoreSalesId && document.getElementById('ss-overlay') && document.getElementById('ss-overlay').classList.contains('open')) {
+          openStoreSales(currentStoreSalesId, true);
+        }
+      }
+      _lastKnownSync = data.last_sync;
+    }
+  } catch (e) {}
+}
+setInterval(autoCheckSync, 15000);
+setInterval(() => { loadAll(); }, 300000);
+
 loadAll();
 </script>
 
@@ -1981,6 +2282,10 @@ loadAll();
       <div class="ss-topbar-title" id="ss-topbar-name">Store Sales</div>
     </div>
     <div class="ss-topbar-right">
+      <button class="ss-newwin-btn" onclick="openStoreSales(currentStoreSalesId, true)" title="Refresh store sales data live from ClickHouse">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+        Refresh
+      </button>
       <button class="ss-newwin-btn" onclick="openStoreSalesInTab()" title="Open store sales report in a new browser tab/window">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
         Open in New Tab
