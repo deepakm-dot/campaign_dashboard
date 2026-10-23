@@ -22,6 +22,7 @@ import json
 import time
 import shutil
 import tempfile
+import uuid
 import subprocess
 import urllib.parse
 import urllib.request
@@ -148,7 +149,11 @@ def insert_rows(table, columns, rows, chunk=200_000):
         try:
             with os.fdopen(fd, 'w', newline='', encoding='utf-8') as fh:
                 csv.writer(fh, quoting=csv.QUOTE_NONNUMERIC).writerows(buf)
-            _post(f"INSERT INTO {table} ({', '.join(columns)}) FORMAT CSV", data_path=path, timeout=900)
+            # ClickHouse silently drops an insert whose content is identical to an earlier one (block dedup),
+            # which would lose e.g. a config value that is set back to an earlier value. A unique token per
+            # chunk keeps dedup only for retries of the SAME chunk.
+            _post(f"INSERT INTO {table} ({', '.join(columns)}) FORMAT CSV", data_path=path, timeout=900,
+                  params={'insert_deduplication_token': uuid.uuid4().hex})
         finally:
             try:
                 os.remove(path)
@@ -287,6 +292,32 @@ def insert_customers(campaign_id, mobiles, name='', store=''):
     return insert_rows(T_CUST, ['source_db', 'id', 'campaign_id', 'customer_mobile', 'customer_name', 'store_name'], gen())
 
 
+def move_customers(from_campaign_id, to_campaign_id):
+    """Re-home all customers of one campaign id to another.
+    campaign_id is part of the table's sort key, so ALTER UPDATE can't change it: copy, then delete."""
+    f, t = int(from_campaign_id), int(to_campaign_id)
+    execute(f"INSERT INTO {T_CUST} (source_db, id, campaign_id, customer_mobile, customer_name, store_name) "
+            f"SELECT source_db, id, {t}, customer_mobile, customer_name, store_name FROM {T_CUST} "
+            f"WHERE source_db = '{SRC}' AND campaign_id = {f}")
+    execute(f"DELETE FROM {T_CUST} WHERE source_db = '{SRC}' AND campaign_id = {f}")
+
+
+def copy_customers(from_campaign_id, to_campaign_id):
+    """Copy all customers of one campaign id to another (the source rows are kept)."""
+    f, t = int(from_campaign_id), int(to_campaign_id)
+    execute(f"INSERT INTO {T_CUST} (source_db, id, campaign_id, customer_mobile, customer_name, store_name) "
+            f"SELECT source_db, id, {t}, customer_mobile, customer_name, store_name FROM {T_CUST} "
+            f"WHERE source_db = '{SRC}' AND campaign_id = {f}")
+
+
+def delete_staging():
+    """Remove leftovers of an interrupted customer reload (staging rows use a negative campaign_id)."""
+    n = query(f"SELECT count() AS n FROM {T_CUST} WHERE source_db = '{SRC}' AND campaign_id < 0")
+    if n and int(n[0]['n']) > 0:
+        execute(f"DELETE FROM {T_CUST} WHERE source_db = '{SRC}' AND campaign_id < 0")
+    return int(n[0]['n']) if n else 0
+
+
 # --------------------------------------------------------------------------
 # Config key/value
 # --------------------------------------------------------------------------
@@ -298,3 +329,18 @@ def get_config(key, default=None):
 def set_config(key, value):
     execute(f"DELETE FROM {T_CONF} WHERE source_db = '{SRC}' AND key = {lit(key)}")
     insert_rows(T_CONF, ['source_db', 'key', 'value'], [[SRC, key, str(value)]])
+
+
+def get_configs(prefix):
+    """{key: value} for every config key starting with `prefix` (one query)."""
+    r = query(f"SELECT key, value FROM {T_CONF} WHERE source_db = '{SRC}' AND startsWith(key, {lit(prefix)})")
+    return {x['key']: x['value'] for x in r}
+
+
+def set_configs(values):
+    """Set many config keys with one delete + one insert."""
+    if not values:
+        return
+    keys = ', '.join(lit(k) for k in values)
+    execute(f"DELETE FROM {T_CONF} WHERE source_db = '{SRC}' AND key IN ({keys})")
+    insert_rows(T_CONF, ['source_db', 'key', 'value'], [[SRC, k, str(v)] for k, v in values.items()])

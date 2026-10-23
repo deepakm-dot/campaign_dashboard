@@ -254,7 +254,8 @@ def _sync_campaign_master():
                 
                 # Latest values including dates and branch_code
                 updates = {
-                    'campaign_name': camp_name, 'budget': budget, 'target_size': sms_delivered,
+                    'campaign_name': camp_name, 'type': camp_type, 'source': camp_source,
+                    'budget': budget, 'target_size': sms_delivered,
                     'campaign_group': camp_group, 'data_source': data_source,
                     'start_date': start_date, 'end_date': end_date, 'sl_no': sl_no, 'sheet_tab': sheet_tab,
                 }
@@ -1582,14 +1583,14 @@ def run_sync_cycle():
         # Step 1: Download any new customer files from Google Drive
         _SYNC_STATUS["message"] = "Downloading customer files from Google Drive..."
         try:
-            subprocess.run([sys.executable, os.path.join(base_dir, "directsync.py")], cwd=root_dir, timeout=240, check=False)
+            subprocess.run([sys.executable, os.path.join(base_dir, "directsync.py")], cwd=root_dir, timeout=1200, check=False)
         except Exception as e_ds:
             print(f"[SYNC WARNING] directsync error: {e_ds}")
             
         # Step 2: Calculate KPIs and attribution (always runs!)
         _SYNC_STATUS["message"] = "Calculating incremental lift and KPIs..."
         try:
-            subprocess.run([sys.executable, os.path.join(base_dir, "fixkpi.py")], cwd=root_dir, timeout=180, check=False)
+            subprocess.run([sys.executable, os.path.join(base_dir, "fixkpi.py")], cwd=root_dir, timeout=600, check=False)
         except Exception as e_kpi:
             print(f"[SYNC WARNING] fixkpi error: {e_kpi}")
             

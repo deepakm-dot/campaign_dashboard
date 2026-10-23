@@ -92,6 +92,12 @@
     /* CHART ROWS */
     .row2 { display:grid; grid-template-columns:1fr 360px; gap:16px; margin-bottom:24px; }
     .row3 { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; }
+    @media (max-width: 1100px) {
+      .row3 { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 600px) {
+      .row3 { grid-template-columns: 1fr; }
+    }
 
     /* STAT MINI */
     .stat-mini { display:flex; align-items:center; gap:14px; }
@@ -103,11 +109,15 @@
     /* CHANNEL STAT CARDS */
     .ch-card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:24px 22px 20px; position:relative; overflow:hidden; transition:transform 0.2s, box-shadow 0.2s; box-shadow:var(--shadow); }
     .ch-card:hover { transform:translateY(-3px); box-shadow:var(--shadow-lg); }
-    .ch-card::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; border-radius:16px 16px 0 0; }
-    .ch-card-wa::before  { background:linear-gradient(90deg,#059669,#34d399); }
-    .ch-card-rcs::before { background:linear-gradient(90deg,#0891b2,#22d3ee); }
-    .ch-card-sms::before { background:linear-gradient(90deg,#6366f1,#818cf8); }
-    .ch-card-vo::before  { background:linear-gradient(90deg,#d97706,#fbbf24); }
+    .ch-card::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; border-radius:16px 16px 0 0; background:var(--ch-grad, linear-gradient(90deg,#6366f1,#818cf8)); }
+    .ch-card-wa::before       { background:linear-gradient(90deg,#059669,#34d399); }
+    .ch-card-rcs::before      { background:linear-gradient(90deg,#0891b2,#22d3ee); }
+    .ch-card-sms::before      { background:linear-gradient(90deg,#6366f1,#818cf8); }
+    .ch-card-vo::before       { background:linear-gradient(90deg,#d97706,#fbbf24); }
+    .ch-card-wa-rcs::before   { background:linear-gradient(90deg,#8b5cf6,#a78bfa); }
+    .ch-card-rcs-sms::before  { background:linear-gradient(90deg,#2563eb,#60a5fa); }
+    .ch-card-multi::before    { background:linear-gradient(90deg,#db2777,#f472b6); }
+    .ch-card-wa-sms::before   { background:linear-gradient(90deg,#0d9488,#2dd4bf); }
     .ch-card-icon { font-size:28px; margin-bottom:16px; display:block; }
     .ch-card-num { font-size:42px; font-weight:900; letter-spacing:-2px; line-height:1; margin-bottom:4px; }
     .ch-card-label { font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:16px; }
@@ -874,21 +884,52 @@ function buildChannel(camps){
 function buildChannelStats(camps){
   const cnt={}, rev={};
   camps.forEach(c=>{ const t=c.type||'Other'; cnt[t]=(cnt[t]||0)+1; rev[t]=(rev[t]||0)+(Number(c.purchase_value)||0); });
-  const top4=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a]).slice(0,4);
+  const allTypes = Object.keys(cnt).sort((a,b) => (cnt[b] - cnt[a]) || (rev[b] - rev[a]));
 
   const META = {
-    SMS:       { icon:'💬', cls:'ch-card-sms', color:'#a5b4fc' },
-    Whatsapp:  { icon:'📱', cls:'ch-card-wa',  color:'#6ee7b7' },
-    WhatsApp:  { icon:'📱', cls:'ch-card-wa',  color:'#6ee7b7' },
-    RCS:       { icon:'🔵', cls:'ch-card-rcs', color:'#67e8f9' },
-    VoiceOver: { icon:'📞', cls:'ch-card-vo',  color:'#fcd34d' },
+    SMS:                { icon:'💬', cls:'ch-card-sms', color:'#4f46e5', grad:'linear-gradient(90deg,#6366f1,#818cf8)' },
+    Whatsapp:           { icon:'📱', cls:'ch-card-wa',  color:'#059669', grad:'linear-gradient(90deg,#059669,#34d399)' },
+    WhatsApp:           { icon:'📱', cls:'ch-card-wa',  color:'#059669', grad:'linear-gradient(90deg,#059669,#34d399)' },
+    RCS:                { icon:'🔵', cls:'ch-card-rcs', color:'#0891b2', grad:'linear-gradient(90deg,#0891b2,#22d3ee)' },
+    VoiceOver:          { icon:'📞', cls:'ch-card-vo',  color:'#d97706', grad:'linear-gradient(90deg,#d97706,#fbbf24)' },
+    'WhatsApp,RCS':     { icon:'📣', cls:'ch-card-wa-rcs', color:'#7c3aed', grad:'linear-gradient(90deg,#8b5cf6,#a78bfa)' },
+    'Whatsapp,RCS':     { icon:'📣', cls:'ch-card-wa-rcs', color:'#7c3aed', grad:'linear-gradient(90deg,#8b5cf6,#a78bfa)' },
+    'RCS,SMS':          { icon:'⚡', cls:'ch-card-rcs-sms', color:'#2563eb', grad:'linear-gradient(90deg,#2563eb,#60a5fa)' },
+    'RCS,SMS,Whatsapp': { icon:'🎯', cls:'ch-card-multi', color:'#db2777', grad:'linear-gradient(90deg,#db2777,#f472b6)' },
+    'RCS,SMS,WhatsApp': { icon:'🎯', cls:'ch-card-multi', color:'#db2777', grad:'linear-gradient(90deg,#db2777,#f472b6)' },
+    'RCS,Whatsapp,SMS': { icon:'🎯', cls:'ch-card-multi', color:'#db2777', grad:'linear-gradient(90deg,#db2777,#f472b6)' },
+    'RCS,WhatsApp,SMS': { icon:'🎯', cls:'ch-card-multi', color:'#db2777', grad:'linear-gradient(90deg,#db2777,#f472b6)' },
+    'WhatsApp,SMS':     { icon:'🚀', cls:'ch-card-wa-sms', color:'#0d9488', grad:'linear-gradient(90deg,#0d9488,#2dd4bf)' },
+    'Whatsapp,SMS':     { icon:'🚀', cls:'ch-card-wa-sms', color:'#0d9488', grad:'linear-gradient(90deg,#0d9488,#2dd4bf)' }
   };
 
-  document.getElementById('channel-stats').innerHTML = top4.map(t=>{
-    const m = META[t] || { icon:'📣', cls:'ch-card-sms', color:'#a5b4fc' };
+  function getChannelMeta(type) {
+    if (META[type]) return META[type];
+    const lower = (type || '').toLowerCase().replace(/\s+/g, '');
+    if (lower === 'whatsapp') return META['WhatsApp'];
+    if (lower === 'sms') return META['SMS'];
+    if (lower === 'rcs') return META['RCS'];
+    if (lower.includes('voice')) return META['VoiceOver'];
+    if (lower.includes('whatsapp') && lower.includes('rcs') && lower.includes('sms')) {
+      return META['RCS,SMS,WhatsApp'];
+    }
+    if (lower.includes('whatsapp') && lower.includes('rcs')) {
+      return META['WhatsApp,RCS'];
+    }
+    if (lower.includes('rcs') && lower.includes('sms')) {
+      return META['RCS,SMS'];
+    }
+    if (lower.includes('whatsapp') && lower.includes('sms')) {
+      return META['WhatsApp,SMS'];
+    }
+    return { icon:'📣', cls:'ch-card-sms', color:'#4f46e5', grad:'linear-gradient(90deg,#6366f1,#818cf8)' };
+  }
+
+  document.getElementById('channel-stats').innerHTML = allTypes.map(t=>{
+    const m = getChannelMeta(t);
     const hasRev = rev[t] > 0;
     return `
-      <div class="ch-card ${m.cls}">
+      <div class="ch-card ${m.cls}" style="--ch-grad:${m.grad};">
         <span class="ch-card-icon">${m.icon}</span>
         <div class="ch-card-num" style="color:${m.color}">${cnt[t]}</div>
         <div class="ch-card-label">${t} Campaigns</div>

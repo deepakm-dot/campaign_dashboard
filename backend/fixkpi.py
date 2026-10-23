@@ -101,7 +101,7 @@ print("=== Step 0: Re-linking orphaned campaign_customers ===", flush=True)
 # Find all campaign_ids in campaign_customers that no longer exist in campaigns
 orphan_ids = [int(r['campaign_id']) for r in ch_db.query(
     f"SELECT DISTINCT campaign_id FROM {T_CUST} "
-    f"WHERE source_db = '{SRC}' AND campaign_id NOT IN (SELECT id FROM {T_CAMP} WHERE source_db = '{SRC}')")]
+    f"WHERE source_db = '{SRC}' AND campaign_id > 0 AND campaign_id NOT IN (SELECT id FROM {T_CAMP} WHERE source_db = '{SRC}')")]
 print(f"  Orphaned campaign_ids: {orphan_ids}", flush=True)
 
 for orphan_id in orphan_ids:
@@ -117,8 +117,7 @@ for orphan_id in orphan_ids:
         if matches:
             # Pick first match
             new_id = matches[0]['id']
-            ch_db.execute(f"ALTER TABLE {T_CUST} UPDATE campaign_id = {int(new_id)} "
-                          f"WHERE source_db = '{SRC}' AND campaign_id = {orphan_id}")
+            ch_db.move_customers(orphan_id, new_id)
             print(f"  -> Re-linked {orphan_id} -> {new_id} ({matches[0]['campaign_name']})", flush=True)
         else:
             print(f"  -> No match found for store '{store}'", flush=True)
@@ -170,6 +169,22 @@ cust_counts = ch_db.customer_counts()
 camps = [cp for cp in all_camps if cust_counts.get(cp['id'], 0) > 0]
 print(f"Found {len(camps)} campaigns with customers.", flush=True)
 
+# Campaigns that are still running (or ended within the last day) keep receiving sales, so they are
+# re-attributed too, at most once per LIVE_REFRESH_MINUTES. Older settled campaigns stay frozen.
+import time
+from datetime import datetime, timedelta
+LIVE_REFRESH_MINUTES = 20
+KPI_TS_PREFIX = 'kpi_refreshed:'
+kpi_refreshed = ch_db.get_configs(KPI_TS_PREFIX)
+_cutoff = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+
+def _needs_live_refresh(camp):
+    end = (camp.get('end_date') or camp.get('start_date') or '')[:10]
+    if not end or end < _cutoff:
+        return False
+    last = float(kpi_refreshed.get(f"{KPI_TS_PREFIX}{camp['id']}", 0) or 0)
+    return (time.time() - last) >= LIVE_REFRESH_MINUTES * 60
+
 for camp in camps:
     camp_id      = camp['id']
     camp_name    = camp['campaign_name']
@@ -183,7 +198,7 @@ for camp in camps:
     n_cnt = int(camp['new_customers'] or 0)
     e_cnt = int(camp['existing_customers'] or 0)
     
-    if p_cnt > 0 and (n_cnt + e_cnt) == p_cnt:
+    if p_cnt > 0 and (n_cnt + e_cnt) == p_cnt and not _needs_live_refresh(camp):
         # Reconcile conversion rate & ROI with latest sheet values (budget & sms_delivered)
         conv_rate = (p_cnt / sms_delivered * 100) if sms_delivered > 0 else 0
         p_val = float(camp['purchase_value'] or 0)
@@ -290,6 +305,7 @@ for camp in camps:
         'new_customers': new_customers, 'existing_customers': existing_customers,
         'top_brands': json.dumps(top_brands), 'top_categories': json.dumps(top_cats),
     })
+    ch_db.set_config(f"{KPI_TS_PREFIX}{camp_id}", int(time.time()))
     print(f"  ✅ Updated.", flush=True)
 
 print("\n=== DONE ===", flush=True)
