@@ -600,10 +600,6 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
         Campaigns
       </a>
-      <a class="nav-item" onclick="nav('performance',this)">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
-        Performance
-      </a>
     </div>
     <div class="sidebar-footer">
       <div class="sync-badge">
@@ -740,24 +736,6 @@
       <div class="group-grid" id="group-grid"></div>
     </div>
 
-    <!-- PERFORMANCE PAGE -->
-    <div class="content" id="pg-performance" style="display:none;">
-      <div class="page-header"><div class="page-title">Performance Deep Dive</div><div class="page-sub">Branch analytics, product categories &amp; brand affinity</div></div>
-      <div class="row2">
-        <div class="card">
-          <div class="card-header"><div class="card-title">Revenue by Branch</div><div class="card-sub">Top 5 store branches</div></div>
-          <div class="card-body"><div style="height:260px;position:relative;"><canvas id="branchChart"></canvas></div></div>
-        </div>
-        <div class="card">
-          <div class="card-header"><div class="card-title">Product Category Split</div><div class="card-sub">Sales from campaign customers</div></div>
-          <div class="card-body">
-            <div style="height:190px;position:relative;"><canvas id="catChart"></canvas></div>
-            <div class="donut-legend" id="cat-legend"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
   </main>
 </div>
 
@@ -789,13 +767,14 @@ setInterval(tick,1000); tick();
 
 /* ---- NAV ---- */
 function nav(page, el){
-  ['overview','campaigns','performance'].forEach(p =>
-    document.getElementById('pg-'+p).style.display = p===page?'':'none');
+  ['overview','campaigns'].forEach(p => {
+    const pageEl = document.getElementById('pg-'+p);
+    if(pageEl) pageEl.style.display = p===page?'':'none';
+  });
   document.querySelectorAll('.nav-item').forEach(x => x.classList.remove('active'));
-  el.classList.add('active');
-  const titles = {overview:'Overview',campaigns:'Campaigns',performance:'Performance'};
+  if(el) el.classList.add('active');
+  const titles = {overview:'Overview',campaigns:'Campaigns'};
   document.getElementById('crumb').textContent = titles[page]||page;
-  if(page==='performance') loadPerf();
 }
 
 /* ---- FORMAT ---- */
@@ -1495,24 +1474,6 @@ function buildGroupGrid(){
         </div>
       </div>`;
   }).join('');
-}
-
-/* ---- PERFORMANCE ---- */
-async function loadPerf(){
-  try{
-    const r=await fetch('/api/analytics/report').then(x=>x.json());
-    const branches=(r.branches||[]).slice(0,5);
-    mkChart('branchChart',{
-      type:'bar',
-      data:{ labels:branches.map(b=>b.branch), datasets:[{data:branches.map(b=>Number(b.sales_value)||0), backgroundColor:CLR, borderRadius:7}] },
-      options:{
-        responsive:true, maintainAspectRatio:false, indexAxis:'y',
-        plugins:{ legend:{display:false}, tooltip:{backgroundColor:'#1e293b',callbacks:{label:c=>' '+inr(c.raw)}} },
-        scales:{ x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{callback:v=>inr(v),font:{size:11}}}, y:{grid:{display:false},ticks:{font:{size:11}}} }
-      }
-    });
-    buildCategorySplit(r.products||[], 'catChart', 'cat-legend');
-  } catch(e){ console.error(e); }
 }
 
 /* ---- STORE SALES FULL-SCREEN PAGE ---- */
