@@ -158,6 +158,10 @@
     .b-wa    { background:rgba(5,150,105,0.10);  color:#047857; border:1px solid rgba(5,150,105,0.2); }
     .b-rcs   { background:rgba(8,145,178,0.10);  color:#0e7490; border:1px solid rgba(8,145,178,0.2); }
     .b-voice { background:rgba(217,119,6,0.10);  color:#b45309; border:1px solid rgba(217,119,6,0.2); }
+    .b-multi { background:rgba(219,39,119,0.10); color:#be185d; border:1px solid rgba(219,39,119,0.2); }
+    .b-wa-rcs { background:rgba(124,58,237,0.10); color:#6d28d9; border:1px solid rgba(124,58,237,0.2); }
+    .b-rcs-sms { background:rgba(37,99,235,0.10); color:#1d4ed8; border:1px solid rgba(37,99,235,0.2); }
+    .b-wa-sms { background:rgba(13,148,136,0.10); color:#0f766e; border:1px solid rgba(13,148,136,0.2); }
 
     .roi-pill { display:inline-flex; align-items:center; padding:3px 10px; border-radius:20px; font-size:12px; font-weight:700; }
     .roi-pos  { background:rgba(5,150,105,0.10); color:#047857; border:1px solid rgba(5,150,105,0.2); }
@@ -803,9 +807,43 @@ function pct(v){
   return n.toFixed(1) + '%';
 }
 
+function normalizeChannelType(type) {
+  if (!type) return 'Other';
+  const lower = String(type).toLowerCase().replace(/\s+/g, '');
+  const hasWA = lower.includes('what') || lower.includes('wa');
+  const hasRCS = lower.includes('rcs');
+  const hasSMS = lower.includes('sms');
+  const hasVO = lower.includes('voice');
+
+  if (hasWA && hasRCS && hasSMS) return 'RCS,SMS,WhatsApp';
+  if (hasWA && hasRCS) return 'WhatsApp,RCS';
+  if (hasRCS && hasSMS) return 'RCS,SMS';
+  if (hasWA && hasSMS) return 'WhatsApp,SMS';
+  if (hasWA) return 'WhatsApp';
+  if (hasRCS) return 'RCS';
+  if (hasSMS) return 'SMS';
+  if (hasVO) return 'VoiceOver';
+  return String(type).trim();
+}
+
 function modeBadge(t){
-  const m={SMS:'b-sms',Whatsapp:'b-wa',WhatsApp:'b-wa',RCS:'b-rcs',VoiceOver:'b-voice'};
-  return `<span class="badge ${m[t]||'b-sms'}">${t}</span>`;
+  const norm = normalizeChannelType(t);
+  const m = {
+    'SMS': 'b-sms',
+    'WhatsApp': 'b-wa',
+    'Whatsapp': 'b-wa',
+    'RCS': 'b-rcs',
+    'VoiceOver': 'b-voice',
+    'WhatsApp,RCS': 'b-wa-rcs',
+    'Whatsapp,RCS': 'b-wa-rcs',
+    'RCS,SMS': 'b-rcs-sms',
+    'WhatsApp,SMS': 'b-wa-sms',
+    'Whatsapp,SMS': 'b-wa-sms',
+    'RCS,SMS,WhatsApp': 'b-multi',
+    'RCS,SMS,Whatsapp': 'b-multi',
+    'WhatsApp,RCS,SMS': 'b-multi'
+  };
+  return `<span class="badge ${m[norm] || m[t] || 'b-multi'}">${norm || t}</span>`;
 }
 function roiTag(v){
   v=Number(v)||0;
@@ -843,7 +881,10 @@ async function loadAll(){
       fetch('/api/campaigns' + q).then(r=>r.json()),
       fetch('/api/analytics/report' + q).then(r=>r.json()),
     ]);
-    allCamps = camps.campaigns || [];
+    allCamps = (camps.campaigns || []).map(c => ({
+      ...c,
+      type: normalizeChannelType(c.type)
+    }));
 
     counter(document.getElementById('kv-camps'), stats.total_campaigns||0, v => Math.round(v));
     counter(document.getElementById('kv-reach'), stats.total_reached||0, v => num(Math.round(v)));
@@ -1050,7 +1091,7 @@ function buildTrend(trend){
 /* ---- CHANNEL DONUT ---- */
 function buildChannel(camps){
   const cnt={};
-  camps.forEach(c=>{ const t=c.type||'Other'; cnt[t]=(cnt[t]||0)+1; });
+  camps.forEach(c=>{ const t=normalizeChannelType(c.type); cnt[t]=(cnt[t]||0)+1; });
   const labels=Object.keys(cnt), data=Object.values(cnt), total=data.reduce((a,b)=>a+b,0);
   const legEl = document.getElementById('channel-legend');
   
@@ -1130,7 +1171,11 @@ function buildCategorySplit(products, chartId='overviewCatChart', legendId='over
 /* ---- CHANNEL STATS ---- */
 function buildChannelStats(camps){
   const cnt={}, rev={};
-  camps.forEach(c=>{ const t=c.type||'Other'; cnt[t]=(cnt[t]||0)+1; rev[t]=(rev[t]||0)+(Number(c.purchase_value)||0); });
+  camps.forEach(c=>{
+    const t=normalizeChannelType(c.type);
+    cnt[t]=(cnt[t]||0)+1;
+    rev[t]=(rev[t]||0)+(Number(c.purchase_value)||0);
+  });
   const allTypes = Object.keys(cnt).sort((a,b) => (cnt[b] - cnt[a]) || (rev[b] - rev[a]));
   const statEl = document.getElementById('channel-stats');
   if(!statEl) return;
@@ -1152,12 +1197,15 @@ function buildChannelStats(camps){
     'RCS,SMS,WhatsApp': { icon:'🎯', cls:'ch-card-multi', color:'#db2777', grad:'linear-gradient(90deg,#db2777,#f472b6)' },
     'RCS,Whatsapp,SMS': { icon:'🎯', cls:'ch-card-multi', color:'#db2777', grad:'linear-gradient(90deg,#db2777,#f472b6)' },
     'RCS,WhatsApp,SMS': { icon:'🎯', cls:'ch-card-multi', color:'#db2777', grad:'linear-gradient(90deg,#db2777,#f472b6)' },
+    'WhatsApp,RCS,SMS': { icon:'🎯', cls:'ch-card-multi', color:'#db2777', grad:'linear-gradient(90deg,#db2777,#f472b6)' },
     'WhatsApp,SMS':     { icon:'🚀', cls:'ch-card-wa-sms', color:'#0d9488', grad:'linear-gradient(90deg,#0d9488,#2dd4bf)' },
     'Whatsapp,SMS':     { icon:'🚀', cls:'ch-card-wa-sms', color:'#0d9488', grad:'linear-gradient(90deg,#0d9488,#2dd4bf)' }
   };
 
   function getChannelMeta(type) {
     if (META[type]) return META[type];
+    const norm = normalizeChannelType(type);
+    if (META[norm]) return META[norm];
     const lower = (type || '').toLowerCase().replace(/\s+/g, '');
     if (lower === 'whatsapp') return META['WhatsApp'];
     if (lower === 'sms') return META['SMS'];

@@ -52,6 +52,33 @@ def load_branch_map():
         print(f"[WARNING] Could not read Book1.xlsx for branch codes: {e}")
     return branch_map
 
+def normalize_campaign_type(t):
+    if not t:
+        return 'Other'
+    lower = str(t).lower().replace(' ', '')
+    has_wa = 'what' in lower or 'wa' in lower
+    has_rcs = 'rcs' in lower
+    has_sms = 'sms' in lower
+    has_vo = 'voice' in lower
+
+    if has_wa and has_rcs and has_sms:
+        return 'RCS,SMS,WhatsApp'
+    if has_wa and has_rcs:
+        return 'WhatsApp,RCS'
+    if has_rcs and has_sms:
+        return 'RCS,SMS'
+    if has_wa and has_sms:
+        return 'WhatsApp,SMS'
+    if has_wa:
+        return 'WhatsApp'
+    if has_rcs:
+        return 'RCS'
+    if has_sms:
+        return 'SMS'
+    if has_vo:
+        return 'VoiceOver'
+    return str(t).strip()
+
 import re
 
 def get_val(row_dict, possible_keys, default=''):
@@ -213,7 +240,7 @@ def _sync_campaign_master():
 
         for row in campaigns_data:
             camp_name = str(row.get('Campaign Name', 'Unknown')).strip()
-            camp_type = str(row.get('Campaign Mode', 'Unknown')).strip()
+            camp_type = normalize_campaign_type(str(row.get('Campaign Mode', 'Unknown')).strip())
             camp_source = str(row.get('Source', '')).strip()
             camp_group = str(row.get('Campaign Group', '')).strip()
             # The 'Data ' column has a trailing space in the sheet headers
@@ -971,7 +998,7 @@ def get_campaign_store_sales(campaign_id):
         return {
             'campaign_id':        camp.get('id'),
             'campaign':           camp.get('campaign_name'),
-            'type':               camp.get('type'),
+            'type':               normalize_campaign_type(camp.get('type')),
             'period':             f"{start_date} to {end_date}",
             'start_date':         start_date,
             'end_date':           end_date,
@@ -1438,6 +1465,7 @@ def get_campaigns():
                         camp[date_field] = parsed.strftime('%d-%m-%Y')
                     except:
                         pass
+            camp['type'] = normalize_campaign_type(camp.get('type'))
             campaigns.append(camp)
         return {"campaigns": campaigns}
     except Exception as e:
