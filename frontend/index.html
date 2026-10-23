@@ -580,6 +580,392 @@
     @keyframes spin { to{transform:rotate(360deg)} }
     .spinning { animation: spin 0.8s linear infinite; }
     .ss-error { text-align:center; padding:60px; color:#dc2626; }
+
+    /* AI CHATBOT STYLES */
+    .ai-sparkle-pill {
+      margin-left: auto;
+      font-size: 10px;
+      font-weight: 800;
+      padding: 2px 7px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      color: #fff;
+      letter-spacing: 0.5px;
+      box-shadow: 0 2px 6px rgba(168, 85, 247, 0.3);
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .ai-chat-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .ai-header-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      color: #fff;
+      font-size: 16px;
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+    }
+    .ai-conn-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #ecfdf5;
+      color: #065f46;
+      border: 1px solid #a7f3d0;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .ai-pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #10b981;
+      box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.25);
+      animation: aiPulse 2s infinite;
+    }
+    @keyframes aiPulse {
+      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+      70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+    .ai-quick-prompts-wrap {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: var(--shadow-sm);
+      overflow-x: auto;
+    }
+    .ai-prompts-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+    }
+    .ai-prompts-scroll {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+      scrollbar-width: none;
+    }
+    .ai-prompts-scroll::-webkit-scrollbar { display: none; }
+    .ai-chip {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 20px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .ai-chip:hover {
+      background: #eef2ff;
+      border-color: #c7d2fe;
+      color: #4f46e5;
+      transform: translateY(-1px);
+    }
+    .ai-chat-window {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      min-height: 440px;
+      max-height: 560px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 20px;
+      scroll-behavior: smooth;
+    }
+    .ai-msg {
+      display: flex;
+      gap: 12px;
+      max-width: 85%;
+      animation: fadeInMsg 0.2s ease-out;
+    }
+    @keyframes fadeInMsg {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .ai-msg-user {
+      align-self: flex-end;
+      flex-direction: row-reverse;
+    }
+    .ai-msg-bot {
+      align-self: flex-start;
+    }
+    .ai-msg-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+      background: #eef2ff;
+      border: 1px solid #c7d2fe;
+    }
+    .ai-msg-user .ai-msg-avatar {
+      background: #f1f5f9;
+      border-color: #cbd5e1;
+    }
+    .ai-msg-content {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-width: 100%;
+    }
+    .ai-msg-user .ai-msg-content {
+      align-items: flex-end;
+    }
+    .ai-msg-bubble {
+      padding: 14px 18px;
+      border-radius: 16px;
+      font-size: 13.5px;
+      line-height: 1.55;
+      color: var(--text);
+    }
+    .ai-msg-user .ai-msg-bubble {
+      background: linear-gradient(135deg, #4f46e5, #6366f1);
+      color: #ffffff;
+      border-bottom-right-radius: 4px;
+      box-shadow: 0 3px 12px rgba(79, 70, 229, 0.25);
+    }
+    .ai-msg-bot .ai-msg-bubble {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-bottom-left-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+    }
+    .ai-msg-title {
+      font-size: 15px;
+      font-weight: 800;
+      color: #0f172a;
+      margin-bottom: 6px;
+    }
+    .ai-msg-time {
+      font-size: 10px;
+      color: var(--muted);
+      padding: 0 4px;
+    }
+    .ai-cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .ai-kpi-card {
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    }
+    .ai-kpi-lbl {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .ai-kpi-val {
+      font-size: 18px;
+      font-weight: 900;
+    }
+    .ai-table-wrap {
+      margin-top: 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      background: #ffffff;
+    }
+    .ai-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .ai-table th {
+      background: #f8fafc;
+      color: var(--muted);
+      text-align: left;
+      padding: 8px 12px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+    }
+    .ai-table td {
+      padding: 8px 12px;
+      border-bottom: 1px solid #f1f5f9;
+      color: var(--text);
+    }
+    .ai-table tr:last-child td {
+      border-bottom: none;
+    }
+    .ai-sql-details {
+      margin-top: 10px;
+      border: 1px dashed #cbd5e1;
+      border-radius: 8px;
+      padding: 6px 10px;
+      background: #f8fafc;
+      font-size: 11px;
+    }
+    .ai-sql-details summary {
+      cursor: pointer;
+      font-weight: 600;
+      color: #64748b;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .ai-sql-code {
+      margin-top: 8px;
+      padding: 8px 10px;
+      background: #0f172a;
+      color: #38bdf8;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 11px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .ai-followup-chips {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .ai-chip-sm {
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      color: #4f46e5;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 14px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .ai-chip-sm:hover {
+      background: #eef2ff;
+      border-color: #818cf8;
+    }
+    .ai-typing {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 0;
+    }
+    .ai-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #6366f1;
+      animation: aiDotBounce 1.4s infinite ease-in-out both;
+    }
+    .ai-dot:nth-child(1) { animation-delay: -0.32s; }
+    .ai-dot:nth-child(2) { animation-delay: -0.16s; }
+    @keyframes aiDotBounce {
+      0%, 80%, 100% { transform: scale(0); opacity: 0.4; }
+      40% { transform: scale(1); opacity: 1; }
+    }
+    .ai-input-bar-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .ai-input-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--card);
+      border: 1.5px solid var(--border);
+      border-radius: 14px;
+      padding: 6px 8px 6px 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .ai-input-bar:focus-within {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15);
+    }
+    .ai-input {
+      flex: 1;
+      border: none;
+      background: transparent;
+      outline: none;
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      color: var(--text);
+    }
+    .ai-input::placeholder {
+      color: #94a3b8;
+    }
+    .ai-send-btn {
+      background: linear-gradient(135deg, #4f46e5, #6366f1);
+      color: #ffffff;
+      border: none;
+      padding: 9px 18px;
+      border-radius: 10px;
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s;
+      box-shadow: 0 2px 8px rgba(79, 70, 229, 0.3);
+    }
+    .ai-send-btn:hover {
+      background: linear-gradient(135deg, #4338ca, #4f46e5);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);
+    }
+    .ai-send-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .ai-input-hint {
+      font-size: 11px;
+      color: var(--muted);
+      text-align: center;
+      margin-top: 2px;
+    }
   </style>
 </head>
 <body>
@@ -603,6 +989,11 @@
       <a class="nav-item" onclick="nav('campaigns',this)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
         Campaigns
+      </a>
+      <a class="nav-item" onclick="nav('ai',this)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2 2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><rect width="16" height="12" x="4" y="8" rx="3"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/><path d="M10 17h4"/></svg>
+        Ask AI
+        <span class="ai-sparkle-pill">✨ AI</span>
       </a>
     </div>
     <div class="sidebar-footer">
@@ -740,6 +1131,78 @@
       <div class="group-grid" id="group-grid"></div>
     </div>
 
+    <!-- AI CHATBOT PAGE -->
+    <div class="content" id="pg-ai" style="display:none;">
+      <div class="ai-chat-header">
+        <div>
+          <div class="page-title" style="display:flex;align-items:center;gap:10px;">
+            <span class="ai-header-badge">✨</span>
+            AI Data Assistant
+          </div>
+          <div class="page-sub">Ask any question about store sales, product performance, and campaign analytics from ClickHouse</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="ai-conn-pill">
+            <span class="ai-pulse-dot"></span> ClickHouse 36.9M+ Sales
+          </span>
+          <button class="btn btn-outline" onclick="clearAiChat()" style="font-size:12px;padding:6px 12px;cursor:pointer;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Clear Chat
+          </button>
+        </div>
+      </div>
+
+      <!-- Suggested Quick Prompt Chips -->
+      <div class="ai-quick-prompts-wrap">
+        <div class="ai-prompts-label">Suggested:</div>
+        <div class="ai-prompts-scroll">
+          <button class="ai-chip" onclick="askAiPrompt('What was the total sale on 2026-08-14?')">💰 Total sale on 2026-08-14</button>
+          <button class="ai-chip" onclick="askAiPrompt('Which product was most sold on 2026-08-14?')">🏆 Most sold product on 2026-08-14</button>
+          <button class="ai-chip" onclick="askAiPrompt('How much TV was sold on 2026-08-14?')">📺 TV sales on 2026-08-14</button>
+          <button class="ai-chip" onclick="askAiPrompt('How much Mobile was sold on 2026-08-14?')">📱 Mobile sales on 2026-08-14</button>
+          <button class="ai-chip" onclick="askAiPrompt('Which branch had the highest sales on 2026-08-14?')">🏬 Top branch on 2026-08-14</button>
+          <button class="ai-chip" onclick="askAiPrompt('What was our top performing campaign by revenue?')">🎯 Best campaign</button>
+        </div>
+      </div>
+
+      <!-- Chat History Stream -->
+      <div class="ai-chat-window" id="ai-chat-window">
+        <!-- Default Welcome Message -->
+        <div class="ai-msg ai-msg-bot">
+          <div class="ai-msg-avatar">🤖</div>
+          <div class="ai-msg-content">
+            <div class="ai-msg-bubble">
+              <div class="ai-msg-title">Hello! I am your ClickHouse AI Assistant.</div>
+              <div class="ai-msg-text">
+                I have direct real-time access to over <strong>36.9 Million</strong> sales transactions and campaign records in ClickHouse Cloud. You can ask me anything about:
+                <ul style="margin: 8px 0 8px 18px; line-height: 1.6;">
+                  <li><strong>Store Sales:</strong> <em>"What was the sale on 2026-08-14?"</em></li>
+                  <li><strong>Product Categories:</strong> <em>"How much TV was sold on 2026-08-14?"</em> or <em>"Which product was most sold on this date?"</em></li>
+                  <li><strong>Brand Rankings:</strong> <em>"Top 5 mobile brands on 2026-08-14"</em></li>
+                  <li><strong>Store Branches:</strong> <em>"Which branch had the highest sales on 2026-08-14?"</em></li>
+                  <li><strong>Campaigns & ROI:</strong> <em>"What is our top campaign by revenue and ROI?"</em></li>
+                </ul>
+                Select a suggestion above or type your question below!
+              </div>
+            </div>
+            <div class="ai-msg-time">Just now</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chat Input Area -->
+      <div class="ai-input-bar-wrap">
+        <form class="ai-input-bar" onsubmit="event.preventDefault(); submitAiChat();">
+          <input type="text" id="ai-chat-input" class="ai-input" placeholder="Ask anything about sales, products, branches, dates, or campaigns… (e.g. what was the sale on 2026-08-14?)" autocomplete="off" />
+          <button type="submit" id="ai-send-btn" class="ai-send-btn" title="Send (Enter)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+            <span>Ask</span>
+          </button>
+        </form>
+        <div class="ai-input-hint">Direct queries to ClickHouse Cloud &bull; Instant calculation over 36.9M rows</div>
+      </div>
+    </div>
+
   </main>
 </div>
 
@@ -771,14 +1234,20 @@ setInterval(tick,1000); tick();
 
 /* ---- NAV ---- */
 function nav(page, el){
-  ['overview','campaigns'].forEach(p => {
+  ['overview','campaigns','ai'].forEach(p => {
     const pageEl = document.getElementById('pg-'+p);
     if(pageEl) pageEl.style.display = p===page?'':'none';
   });
   document.querySelectorAll('.nav-item').forEach(x => x.classList.remove('active'));
   if(el) el.classList.add('active');
-  const titles = {overview:'Overview',campaigns:'Campaigns'};
+  const titles = {overview:'Executive Overview',campaigns:'Campaign Groups',ai:'AI Assistant · ClickHouse Intelligence'};
   document.getElementById('crumb').textContent = titles[page]||page;
+  if(page==='ai') {
+    setTimeout(()=>{
+      document.getElementById('ai-chat-input')?.focus();
+      scrollAiToBottom();
+    }, 50);
+  }
 }
 
 /* ---- FORMAT ---- */
@@ -2391,6 +2860,238 @@ setInterval(autoCheckSync, 15000);
 setInterval(() => { loadAll(); }, 300000);
 
 loadAll();
+
+/* ---- AI CHATBOT CONTROLLER ---- */
+let _aiChatHistory = [];
+let _aiIsQuerying = false;
+
+function scrollAiToBottom() {
+  const win = document.getElementById('ai-chat-window');
+  if (win) {
+    win.scrollTo({ top: win.scrollHeight, behavior: 'smooth' });
+  }
+}
+
+function clearAiChat() {
+  _aiChatHistory = [];
+  const win = document.getElementById('ai-chat-window');
+  if (!win) return;
+  win.innerHTML = `
+    <div class="ai-msg ai-msg-bot">
+      <div class="ai-msg-avatar">🤖</div>
+      <div class="ai-msg-content">
+        <div class="ai-msg-bubble">
+          <div class="ai-msg-title">Hello! I am your ClickHouse AI Assistant.</div>
+          <div class="ai-msg-text">
+            I have direct real-time access to over <strong>36.9 Million</strong> sales transactions and campaign records in ClickHouse Cloud. You can ask me anything about:
+            <ul style="margin: 8px 0 8px 18px; line-height: 1.6;">
+              <li><strong>Store Sales:</strong> <em>"What was the sale on 2026-08-14?"</em></li>
+              <li><strong>Product Categories:</strong> <em>"How much TV was sold on 2026-08-14?"</em> or <em>"Which product was most sold on this date?"</em></li>
+              <li><strong>Brand Rankings:</strong> <em>"Top 5 mobile brands on 2026-08-14"</em></li>
+              <li><strong>Store Branches:</strong> <em>"Which branch had the highest sales on 2026-08-14?"</em></li>
+              <li><strong>Campaigns & ROI:</strong> <em>"What is our top campaign by revenue and ROI?"</em></li>
+            </ul>
+            Select a suggestion above or type your question below!
+          </div>
+        </div>
+        <div class="ai-msg-time">Just now</div>
+      </div>
+    </div>
+  `;
+  document.getElementById('ai-chat-input')?.focus();
+}
+
+function askAiPrompt(promptText) {
+  const input = document.getElementById('ai-chat-input');
+  if (input) {
+    input.value = promptText;
+  }
+  submitAiChat();
+}
+
+function formatAiMarkdown(text) {
+  if (!text) return '';
+  let html = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  html = html.replace(/`(.*?)`/g, '<code style="background:#e2e8f0;padding:1px 5px;border-radius:4px;font-size:12px;color:#0f172a;">$1</code>');
+  html = html.replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');
+  return html;
+}
+
+async function submitAiChat() {
+  if (_aiIsQuerying) return;
+  const input = document.getElementById('ai-chat-input');
+  const btn = document.getElementById('ai-send-btn');
+  const text = (input?.value || '').trim();
+  if (!text) return;
+
+  const win = document.getElementById('ai-chat-window');
+  if (!win) return;
+
+  const nowTime = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+
+  // 1. Append User Message
+  const userMsgEl = document.createElement('div');
+  userMsgEl.className = 'ai-msg ai-msg-user';
+  userMsgEl.innerHTML = `
+    <div class="ai-msg-avatar">👤</div>
+    <div class="ai-msg-content">
+      <div class="ai-msg-bubble">${formatAiMarkdown(text)}</div>
+      <div class="ai-msg-time">${nowTime}</div>
+    </div>
+  `;
+  win.appendChild(userMsgEl);
+
+  input.value = '';
+  _aiIsQuerying = true;
+  if (btn) btn.disabled = true;
+
+  // 2. Append Typing Indicator
+  const typingEl = document.createElement('div');
+  typingEl.className = 'ai-msg ai-msg-bot';
+  typingEl.id = 'ai-typing-temp';
+  typingEl.innerHTML = `
+    <div class="ai-msg-avatar">🤖</div>
+    <div class="ai-msg-content">
+      <div class="ai-msg-bubble" style="background:#f8fafc;padding:10px 16px;display:flex;align-items:center;gap:10px;">
+        <div class="ai-typing">
+          <div class="ai-dot"></div>
+          <div class="ai-dot"></div>
+          <div class="ai-dot"></div>
+        </div>
+        <span style="font-size:12px;color:var(--muted);font-weight:600;">Querying 36.9M ClickHouse sales records&hellip;</span>
+      </div>
+    </div>
+  `;
+  win.appendChild(typingEl);
+  scrollAiToBottom();
+
+  try {
+    const res = await fetch('/api/ai/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: text, history: _aiChatHistory.slice(-6) })
+    }).then(r => r.json());
+
+    document.getElementById('ai-typing-temp')?.remove();
+
+    if (res && res.answer) {
+      _aiChatHistory.push({ role: 'user', content: text });
+      _aiChatHistory.push({ role: 'assistant', content: res.answer });
+
+      let cardsHtml = '';
+      if (res.cards && res.cards.length) {
+        cardsHtml = `
+          <div class="ai-cards-grid">
+            ${res.cards.map(c => `
+              <div class="ai-kpi-card" style="border-left: 3px solid ${c.color || '#4f46e5'}">
+                <div class="ai-kpi-lbl">${c.label}</div>
+                <div class="ai-kpi-val" style="color:${c.color || '#0f172a'}">${c.value}</div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      }
+
+      let tableHtml = '';
+      if (res.table && res.table.headers && res.table.rows && res.table.rows.length) {
+        tableHtml = `
+          <div class="ai-table-wrap">
+            <table class="ai-table">
+              <thead>
+                <tr>${res.table.headers.map(h => `<th>${h}</th>`).join('')}</tr>
+              </thead>
+              <tbody>
+                ${res.table.rows.map(row => `
+                  <tr>${row.map(col => `<td>${col}</td>`).join('')}</tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      let sqlHtml = '';
+      if (res.sql) {
+        sqlHtml = `
+          <details class="ai-sql-details">
+            <summary>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+              View ClickHouse SQL Query
+            </summary>
+            <pre class="ai-sql-code"><code>${res.sql}</code></pre>
+          </details>
+        `;
+      }
+
+      let suggHtml = '';
+      if (res.suggestions && res.suggestions.length) {
+        suggHtml = `
+          <div class="ai-followup-chips">
+            <span style="font-size:11px;color:var(--muted);font-weight:700;">Follow-up:</span>
+            ${res.suggestions.map(s => {
+              const safeS = s.replace(/'/g, "\\'");
+              return `<button class="ai-chip-sm" onclick="askAiPrompt('${safeS}')">${s}</button>`;
+            }).join('')}
+          </div>
+        `;
+      }
+
+      const botMsgEl = document.createElement('div');
+      botMsgEl.className = 'ai-msg ai-msg-bot';
+      botMsgEl.innerHTML = `
+        <div class="ai-msg-avatar">🤖</div>
+        <div class="ai-msg-content">
+          <div class="ai-msg-bubble">
+            <div class="ai-msg-text">${formatAiMarkdown(res.answer)}</div>
+            ${cardsHtml}
+            ${tableHtml}
+            ${sqlHtml}
+            ${suggHtml}
+          </div>
+          <div class="ai-msg-time">${nowTime}</div>
+        </div>
+      `;
+      win.appendChild(botMsgEl);
+    } else {
+      const errEl = document.createElement('div');
+      errEl.className = 'ai-msg ai-msg-bot';
+      errEl.innerHTML = `
+        <div class="ai-msg-avatar">🤖</div>
+        <div class="ai-msg-content">
+          <div class="ai-msg-bubble" style="border-color:#fca5a5;background:#fef2f2;color:#991b1b;">
+            ${res.error || 'Could not query ClickHouse. Please try rephrasing your question.'}
+          </div>
+          <div class="ai-msg-time">${nowTime}</div>
+        </div>
+      `;
+      win.appendChild(errEl);
+    }
+  } catch (err) {
+    document.getElementById('ai-typing-temp')?.remove();
+    const errEl = document.createElement('div');
+    errEl.className = 'ai-msg ai-msg-bot';
+    errEl.innerHTML = `
+      <div class="ai-msg-avatar">🤖</div>
+      <div class="ai-msg-content">
+        <div class="ai-msg-bubble" style="border-color:#fca5a5;background:#fef2f2;color:#991b1b;">
+          Network error contacting ClickHouse assistant. Please try again.
+        </div>
+        <div class="ai-msg-time">${nowTime}</div>
+      </div>
+    `;
+    win.appendChild(errEl);
+  } finally {
+    _aiIsQuerying = false;
+    if (btn) btn.disabled = false;
+    scrollAiToBottom();
+    input.focus();
+  }
+}
 </script>
 
 <!-- ===== STORE SALES FULL-SCREEN OVERLAY ===== -->

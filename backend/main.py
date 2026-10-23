@@ -1676,6 +1676,24 @@ def serve_store_sales():
     res.set_header('Expires', '0')
     return res
 
+@app.route('/api/ai/query', method=['POST', 'OPTIONS'])
+def api_ai_query():
+    if request.method == 'OPTIONS':
+        return response
+    try:
+        data = request.json or {}
+        q = data.get('query', '').strip()
+        history = data.get('history', [])
+        if not q:
+            response.status = 400
+            return {'error': 'Query is required'}
+        import ai_service
+        result = ai_service.ask_ai(q, history)
+        return result
+    except Exception as e:
+        response.status = 500
+        return {'error': str(e)}
+
 @app.route('/<filepath:path>')
 def serve_static(filepath):
     frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'frontend')
