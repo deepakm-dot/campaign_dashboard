@@ -324,7 +324,10 @@ def answer_with_nlp(question):
         elif item_term:
             item_cond = f"upper(im.item_name) LIKE '%{item_term}%' AND coalesce(im.product, '') NOT IN ('OSG WARRANTY', 'FIXED ASSETS', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
         else:
-            item_cond = f"upper(im.product) LIKE '%{product}%' AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')"
+            if product == 'TV':
+                item_cond = "(upper(im.product) = 'TV' OR im.item_category = 'Tv 18 %' OR s.item_code LIKE 'TV%') AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')"
+            else:
+                item_cond = f"upper(im.product) LIKE '%{product}%' AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')"
 
         if brand:
             item_cond += f" AND upper(im.brand) = '{brand}'"
@@ -334,8 +337,8 @@ def answer_with_nlp(question):
 
         sql = f"""
             SELECT sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
-                   sum(toInt64(s.qty)) as units,
-                   count(DISTINCT s.invoice_no) as invoices,
+                   sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
+                   count(DISTINCT if(s.sold_price > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices,
                    count(DISTINCT s.branch) as branches
             FROM azure_sales_report s
             LEFT JOIN item_master im ON im.item_code = s.item_code
@@ -355,7 +358,7 @@ def answer_with_nlp(question):
         if not brand:
             b_sql = f"""
                 SELECT coalesce(im.brand, 'Other') as brand,
-                       sum(toInt64(s.qty)) as units,
+                       sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
                        sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue
                 FROM azure_sales_report s
                 LEFT JOIN item_master im ON im.item_code = s.item_code
@@ -418,7 +421,7 @@ def answer_with_nlp(question):
         sql = f"""
             SELECT coalesce(im.product, 'Other') as product,
                    sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
-                   sum(toInt64(s.qty)) as units
+                   sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units
             FROM azure_sales_report s
             LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE {date_filter}
@@ -468,7 +471,7 @@ def answer_with_nlp(question):
         sql = f"""
             SELECT coalesce(bm.branch_name, s.branch) as branch_name,
                    sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
-                   sum(toInt64(s.qty)) as units
+                   sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units
             FROM azure_sales_report s
             LEFT JOIN branch_master bm ON bm.code = s.branch
             WHERE {date_filter}
@@ -501,13 +504,13 @@ def answer_with_nlp(question):
     sql = f"""
         SELECT 
             sumIf(toFloat64(s.sold_price) * toInt64(s.qty), s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME') as retail_sales,
-            sumIf(toInt64(s.qty), s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME') as retail_units,
-            count(DISTINCT if(s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME', s.invoice_no, null)) as retail_invoices,
+            sumIf(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty)), s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME') as retail_units,
+            count(DISTINCT if(s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME' AND s.sold_price > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as retail_invoices,
             count(DISTINCT if(s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME', s.branch, null)) as retail_branches,
             sumIf(toFloat64(s.sold_price) * toInt64(s.qty), s.branch IN ('SMC', '3GH') OR coalesce(im.product, '') = 'SCHEME') as internal_schemes_demo,
             sum(toFloat64(s.sold_price) * toInt64(s.qty)) as total_sales,
-            sum(toInt64(s.qty)) as total_units,
-            count(DISTINCT s.invoice_no) as total_invoices
+            sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as total_units,
+            count(DISTINCT if(s.sold_price > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as total_invoices
         FROM azure_sales_report s
         LEFT JOIN item_master im ON im.item_code = s.item_code
         WHERE {date_filter}
