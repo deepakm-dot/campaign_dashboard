@@ -201,25 +201,40 @@ def answer_with_nlp(question):
             date_label = '14 Aug 2026 (Benchmark)'
 
     date_filter = f"toDate(s.date) = '{start_date}'" if start_date == end_date else f"toDate(s.date) >= '{start_date}' AND toDate(s.date) <= '{end_date}'"
-    date_filter_raw = f"toDate(date) = '{start_date}'" if start_date == end_date else f"toDate(date) >= '{start_date}' AND toDate(date) <= '{end_date}'"
+    # Direction: Least / Worst / Bottom vs Top / Best / Most
+    is_least = any(k in q_low for k in [
+        'least', 'lowest', 'worst', 'bottom', 'minimum', 'min', 'slowest',
+        'underperformed', 'underperforming', 'poorest', 'poor'
+    ])
+    
+    # Extract explicit limit if specified (e.g. "5 future stores", "top 3", "least 10")
+    m_lim = re.search(r'\b(?:top|least|bottom|lowest|first)?\s*(\d{1,2})\s*(?:stores?|branches?|products?|items?|campaigns?|brands?)\b', q_low)
+    if not m_lim:
+        m_lim = re.search(r'\b(?:top|least|bottom|lowest)\s+(\d{1,2})\b', q_low)
+    limit = int(m_lim.group(1)) if m_lim else 5
+    if limit <= 0: limit = 5
+    if limit > 50: limit = 50
 
     # 1. CAMPAIGN QUERIES
     if any(k in q_low for k in ['campaign', 'campaigns', 'group', 'roi', 'attribution', 'channel']):
-        if 'top' in q_low or 'best' in q_low or 'highest' in q_low:
-            sql = """
+        if any(k in q_low for k in ['top', 'best', 'highest', 'least', 'lowest', 'worst', 'bottom']) or is_least:
+            order_clause = "ORDER BY purchase_value ASC" if is_least else "ORDER BY purchase_value DESC"
+            rank_label = "lowest performing campaign" if is_least else "top performing campaign"
+            card_color = "#ef4444" if is_least else "#4f46e5"
+            sql = f"""
                 SELECT campaign_name, type, start_date, target_size, purchase_count, 
                        purchase_value, roi, conversion_rate
                 FROM campaign_dashboard_campaigns
                 WHERE source_db = 'root' AND purchase_value > 0
-                ORDER BY purchase_value DESC
-                LIMIT 5
+                {order_clause}
+                LIMIT {limit}
             """
             rows = run_sql(sql)
             if rows:
                 top1 = rows[0]
-                ans = f"The top performing campaign is **{top1['campaign_name']}** ({top1['type']}) with **{format_inr(top1['purchase_value'])}** in revenue, **{format_units(top1['purchase_count'])}** verified customer purchases, and an ROI of **{float(top1.get('roi') or 0):.0f}x**."
+                ans = f"The {rank_label} is **{top1['campaign_name']}** ({top1['type']}) with **{format_inr(top1['purchase_value'])}** in revenue, **{format_units(top1['purchase_count'])}** verified customer purchases, and an ROI of **{float(top1.get('roi') or 0):.0f}x**."
                 cards = [
-                    {"label": "Top Campaign", "value": top1['campaign_name'], "color": "#4f46e5"},
+                    {"label": "Campaign", "value": top1['campaign_name'], "color": card_color},
                     {"label": "Revenue", "value": format_inr(top1['purchase_value']), "color": "#059669"},
                     {"label": "Purchases", "value": format_units(top1['purchase_count']), "color": "#2563eb"},
                     {"label": "ROI", "value": f"{float(top1.get('roi') or 0):.0f}x", "color": "#d97706"},
@@ -337,8 +352,14 @@ def answer_with_nlp(question):
             "suggestions": [f"Which product was most sold on {start_date}?", f"What was the total sale on {start_date}?", f"Top branches for {product} on {start_date}"]
         }
 
-    # 4. MOST SOLD PRODUCT (e.g. "which product was most sold on this date")
-    if any(k in q_low for k in ['most sold', 'top product', 'top selling product', 'highest sold product', 'product breakdown']):
+    # 4. MOST / LEAST SOLD PRODUCT (e.g. "which product was most sold on this date" or "least sold product")
+    if any(k in q_low for k in ['most sold', 'top product', 'top selling product', 'highest sold product', 'product breakdown', 'least sold', 'lowest sold', 'worst sold', 'least product', 'lowest product']):
+        order_clause = "ORDER BY revenue ASC" if is_least else "ORDER BY revenue DESC"
+        having_clause = "HAVING revenue > 0" if is_least else ""
+        rank_word = "least sold product" if is_least else "most sold product"
+        card_label = "Lowest Product" if is_least else "Top Product"
+        card_color = "#ef4444" if is_least else "#4f46e5"
+
         sql = f"""
             SELECT coalesce(im.product, 'Other') as product,
                    sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
@@ -349,17 +370,18 @@ def answer_with_nlp(question):
               AND s.branch NOT IN ('SMC', '3GH')
               AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'D SPARE', 'SPARE', 'FIXED ASSETS', 'DEMO', 'DEMO ACCESSORIES')
             GROUP BY product
-            ORDER BY revenue DESC
-            LIMIT 5
+            {having_clause}
+            {order_clause}
+            LIMIT {limit}
         """
         rows = run_sql(sql)
         if rows:
             top1 = rows[0]
-            ans = f"On **{date_label}**, the most sold product by revenue was **{top1['product']}**, generating **{format_inr(top1['revenue'])}** ({format_inr_exact(top1['revenue'])}) with **{format_units(top1['units'])} units** sold."
+            ans = f"On **{date_label}**, the {rank_word} by revenue was **{top1['product']}**, generating **{format_inr(top1['revenue'])}** ({format_inr_exact(top1['revenue'])}) with **{format_units(top1['units'])} units** sold."
             cards = [
-                {"label": "Top Product", "value": top1['product'], "color": "#4f46e5"},
-                {"label": "Top Product Revenue", "value": format_inr(top1['revenue']), "color": "#059669"},
-                {"label": "Top Product Units", "value": format_units(top1['units']), "color": "#2563eb"},
+                {"label": card_label, "value": top1['product'], "color": card_color},
+                {"label": "Product Revenue", "value": format_inr(top1['revenue']), "color": "#059669"},
+                {"label": "Product Units", "value": format_units(top1['units']), "color": "#2563eb"},
                 {"label": "Date", "value": date_label, "color": "#7c3aed"}
             ]
             table = {
@@ -371,8 +393,23 @@ def answer_with_nlp(question):
                 "suggestions": [f"How much {top1['product']} was sold on {start_date}?", f"What was the total sale on {start_date}?", f"Which branch had the highest sales on {start_date}?"]
             }
 
-    # 5. BRANCH / STORE SALES
-    if any(k in q_low for k in ['branch', 'store', 'location', 'highest store', 'top branch']):
+    # 5. BRANCH / STORE SALES (e.g. "least performed 5 future stores on 23-10-2026", "top branches", etc.)
+    if any(k in q_low for k in ['branch', 'branches', 'store', 'stores', 'location', 'locations', 'highest store', 'top branch', 'least performed', 'least performing', 'lowest store', 'worst store', 'bottom store']):
+        store_type_filter = ""
+        store_type_desc = "branches"
+        if 'future' in q_low:
+            store_type_filter = "AND upper(coalesce(bm.branch_name, s.branch)) LIKE '%FUTURE%'"
+            store_type_desc = "Future stores"
+        elif 'care' in q_low:
+            store_type_filter = "AND upper(coalesce(bm.branch_name, s.branch)) LIKE '%CARE%'"
+            store_type_desc = "Care stores"
+
+        order_clause = "ORDER BY revenue ASC" if is_least else "ORDER BY revenue DESC"
+        having_clause = "HAVING revenue > 0" if is_least else ""
+        rank_word = f"least performing {store_type_desc[:-1] if store_type_desc.endswith('s') else store_type_desc}" if is_least else f"top performing {store_type_desc[:-1] if store_type_desc.endswith('s') else store_type_desc}"
+        card_label = f"Lowest {store_type_desc[:-1] if store_type_desc.endswith('s') else store_type_desc}" if is_least else f"Top {store_type_desc[:-1] if store_type_desc.endswith('s') else store_type_desc}"
+        card_color = "#ef4444" if is_least else "#4f46e5"
+
         sql = f"""
             SELECT coalesce(bm.branch_name, s.branch) as branch_name,
                    sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
@@ -381,16 +418,18 @@ def answer_with_nlp(question):
             LEFT JOIN branch_master bm ON bm.code = s.branch
             WHERE {date_filter}
               AND s.branch NOT IN ('SMC', '3GH')
+              {store_type_filter}
             GROUP BY branch_name
-            ORDER BY revenue DESC
-            LIMIT 5
+            {having_clause}
+            {order_clause}
+            LIMIT {limit}
         """
         rows = run_sql(sql)
         if rows:
             top1 = rows[0]
-            ans = f"On **{date_label}**, the top performing branch was **{top1['branch_name']}**, achieving **{format_inr(top1['revenue'])}** in sales ({format_units(top1['units'])} units sold)."
+            ans = f"On **{date_label}**, the {rank_word} was **{top1['branch_name']}**, recording **{format_inr(top1['revenue'])}** in sales ({format_units(top1['units'])} units sold)."
             cards = [
-                {"label": "Top Branch", "value": top1['branch_name'], "color": "#4f46e5"},
+                {"label": card_label, "value": top1['branch_name'], "color": card_color},
                 {"label": "Branch Revenue", "value": format_inr(top1['revenue']), "color": "#059669"},
                 {"label": "Units Sold", "value": format_units(top1['units']), "color": "#2563eb"}
             ]
@@ -400,7 +439,7 @@ def answer_with_nlp(question):
             }
             return {
                 "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
-                "suggestions": [f"Which product was most sold on {start_date}?", f"What was the total sale on {start_date}?", "Show top campaigns"]
+                "suggestions": [f"Top {limit} {store_type_desc} on {start_date}", f"What was the total sale on {start_date}?", f"Which product was most sold on {start_date}?"]
             }
 
     # 6. TOTAL SALE ON A SPECIFIC DATE OR MONTH (e.g. "what was the sale on a specific date")
