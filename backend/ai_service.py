@@ -142,8 +142,12 @@ def extract_dates(text):
 
 # Specific items/appliances matched against item_name
 ITEM_SYNONYMS = {
+    'PEDESTAL FAN': ['pedestal fan', 'pedestal fans', 'stand fan', 'stand fans'],
+    'WALL FAN': ['wall fan', 'wall fans', 'wall mount fan'],
+    'TABLE FAN': ['table fan', 'table fans', 'desk fan'],
+    'EXHAUST FAN': ['exhaust fan', 'exhaust fans'],
     'CEILING FAN': ['ceiling fan', 'ceiling fans', 'bldc fan', 'bldc ceiling fan'],
-    'FAN': ['fan', 'fans', 'pedestal fan', 'wall fan', 'table fan', 'exhaust fan'],
+    'FAN': ['fan', 'fans'],
     'MIXER': ['mixer', 'grinder', 'mixer grinder', 'mixie', 'juicer'],
     'IRON': ['iron', 'iron box', 'steam iron', 'dry iron'],
     'KETTLE': ['kettle', 'electric kettle'],
@@ -311,7 +315,13 @@ def answer_with_nlp(question):
 
     # 2. SPECIFIC PRODUCT / ITEM SALES (e.g. "how many ceiling fan sold", "tv sales", "samsung mobile sold", etc.)
     if product or item_term:
-        if item_term:
+        if item_term == 'PEDESTAL FAN':
+            item_cond = "(upper(im.item_name) LIKE '%PEDESTAL FAN%' OR upper(im.item_name) LIKE '%PEDESTAL%') AND coalesce(im.product, '') NOT IN ('OSG WARRANTY', 'FIXED ASSETS', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+        elif item_term == 'WALL FAN':
+            item_cond = "(upper(im.item_name) LIKE '%WALL FAN%' OR upper(im.item_name) LIKE '%WALL MOUNT FAN%') AND coalesce(im.product, '') NOT IN ('OSG WARRANTY', 'FIXED ASSETS', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+        elif item_term == 'TABLE FAN':
+            item_cond = "(upper(im.item_name) LIKE '%TABLE FAN%' OR upper(im.item_name) LIKE '%DESK FAN%') AND coalesce(im.product, '') NOT IN ('OSG WARRANTY', 'FIXED ASSETS', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+        elif item_term:
             item_cond = f"upper(im.item_name) LIKE '%{item_term}%' AND coalesce(im.product, '') NOT IN ('OSG WARRANTY', 'FIXED ASSETS', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
         else:
             item_cond = f"upper(im.product) LIKE '%{product}%' AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')"
