@@ -274,6 +274,12 @@ def answer_with_nlp(question):
         'number of', 'how much unit', 'in terms of quantity', 'how much piece'
     ])
 
+    is_compare = any(k in q_low for k in [
+        'compare', 'comparison', 'previous year', 'last year', 'same date of previous year',
+        'same date last year', 'yoy', 'year over year', 'vs last year', 'versus last year',
+        'same day last year', 'same period last year', 'compared with', 'compared to'
+    ])
+
     # Default date if not specified: latest date with sales in 2026
     # If question asks about "a specific date" without giving one, pick 2026-08-14 as the benchmark
     has_date = bool(start_date)
@@ -288,6 +294,30 @@ def answer_with_nlp(question):
             date_label = '14 Aug 2026 (Benchmark)'
 
     date_filter = f"toDate(s.date) = '{start_date}'" if start_date == end_date else f"toDate(s.date) >= '{start_date}' AND toDate(s.date) <= '{end_date}'"
+
+    # Previous year date calculations for YoY comparison queries
+    prev_start_date = None
+    prev_end_date = None
+    prev_date_label = None
+    prev_date_filter = None
+    if is_compare and start_date:
+        try:
+            s_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            prev_s_year = s_dt.year - 1
+            day_s = min(s_dt.day, 28) if s_dt.month == 2 and s_dt.day == 29 else s_dt.day
+            prev_s_dt = s_dt.replace(year=prev_s_year, day=day_s)
+            prev_start_date = prev_s_dt.strftime('%Y-%m-%d')
+
+            e_dt = datetime.strptime(end_date, '%Y-%m-%d')
+            prev_e_year = e_dt.year - 1
+            day_e = min(e_dt.day, 28) if e_dt.month == 2 and e_dt.day == 29 else e_dt.day
+            prev_e_dt = e_dt.replace(year=prev_e_year, day=day_e)
+            prev_end_date = prev_e_dt.strftime('%Y-%m-%d')
+
+            prev_date_label = prev_s_dt.strftime('%d %b %Y') if start_date == end_date else f"{prev_s_dt.strftime('%d %b')} - {prev_e_dt.strftime('%d %b %Y')}"
+            prev_date_filter = f"toDate(s.date) = '{prev_start_date}'" if prev_start_date == prev_end_date else f"toDate(s.date) >= '{prev_start_date}' AND toDate(s.date) <= '{prev_end_date}'"
+        except Exception as e:
+            print(f"[YoY Date Parse Error] {e}")
     # Direction: Least / Worst / Bottom vs Top / Best / Most
     is_least = any(k in q_low for k in [
         'least', 'lowest', 'worst', 'bottom', 'minimum', 'min', 'slowest',
@@ -423,6 +453,68 @@ def answer_with_nlp(question):
         invoices = int(float(rows[0]['invoices'])) if rows and rows[0].get('invoices') is not None else 0
         branches = int(float(rows[0]['branches'])) if rows and rows[0].get('branches') is not None else 0
 
+        # Check if user requested a comparison with previous year
+        if is_compare and prev_date_filter:
+            prev_sql = f"""
+                SELECT sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
+                       sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
+                       count(DISTINCT if(s.sold_price > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices,
+                       count(DISTINCT s.branch) as branches
+                FROM azure_sales_report s
+                LEFT JOIN item_master im ON im.item_code = s.item_code
+                WHERE {prev_date_filter}
+                  AND s.branch NOT IN ('SMC', '3GH')
+                  AND {item_cond}
+            """
+            prev_rows = run_sql(prev_sql)
+            rev_prev = float(prev_rows[0]['revenue']) if prev_rows and prev_rows[0].get('revenue') is not None else 0
+            units_prev = int(float(prev_rows[0]['units'])) if prev_rows and prev_rows[0].get('units') is not None else 0
+            inv_prev = int(float(prev_rows[0]['invoices'])) if prev_rows and prev_rows[0].get('invoices') is not None else 0
+
+            diff_units = units - units_prev
+            pct_units = (diff_units / units_prev * 100) if units_prev > 0 else 0
+            diff_rev = rev - rev_prev
+            pct_rev = (diff_rev / rev_prev * 100) if rev_prev > 0 else 0
+
+            trend_u = f"{diff_units:+d} ({pct_units:+.1f}%)"
+            trend_r = f"{format_inr(diff_rev)} ({pct_rev:+.1f}%)"
+            growth_word = "growth" if diff_units >= 0 else "decline"
+            u_color = "#059669" if diff_units >= 0 else "#ef4444"
+            r_color = "#059669" if diff_rev >= 0 else "#ef4444"
+
+            ans = (
+                f"On **{date_label}**, a total of **{format_units(units)} units** of **{display_title}** were sold "
+                f"generating **{format_inr(rev)}** ({format_inr_exact(rev)} across {format_units(invoices)} customer invoices), "
+                f"compared to **{format_units(units_prev)} units** ({format_inr(rev_prev)} across {format_units(inv_prev)} invoices) "
+                f"on **{prev_date_label}** of previous year (**{trend_u} units**, **{pct_rev:+.1f}% revenue {growth_word}**)."
+            )
+
+            cards = [
+                {"label": f"{date_label} Units", "value": f"{format_units(units)} units", "color": "#2563eb"},
+                {"label": f"{prev_date_label} Units", "value": f"{format_units(units_prev)} units", "color": "#6b7280"},
+                {"label": "Unit Growth (YoY)", "value": trend_u, "color": u_color},
+                {"label": "Revenue Growth (YoY)", "value": trend_r, "color": r_color}
+            ]
+
+            table = {
+                "headers": ["Metric", date_label, prev_date_label, "YoY Variance"],
+                "rows": [
+                    ["Units Sold", f"{units:,} units", f"{units_prev:,} units", trend_u],
+                    ["Total Revenue", format_inr_exact(rev), format_inr_exact(rev_prev), trend_r],
+                    ["Customer Invoices", f"{invoices:,}", f"{inv_prev:,}", f"{invoices - inv_prev:+d}"],
+                    ["Avg Selling Price (ASP)", format_inr(rev / max(units, 1)), format_inr(rev_prev / max(units_prev, 1)), f"{format_inr((rev / max(units, 1)) - (rev_prev / max(units_prev, 1)))}"]
+                ]
+            }
+
+            return {
+                "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
+                "suggestions": [
+                    f"Top brands for {display_title} on {start_date}",
+                    f"What was total company revenue on {start_date}?",
+                    f"Compare total sales on {start_date} with previous year"
+                ]
+            }
+
         # Query top brands if no specific brand was requested
         b_rows = []
         top_brand_txt = ""
@@ -497,6 +589,63 @@ def answer_with_nlp(question):
         rev = float(rows[0]['revenue']) if rows and rows[0].get('revenue') is not None else 0
         units = int(float(rows[0]['units'])) if rows and rows[0].get('units') is not None else 0
         invoices = int(float(rows[0]['invoices'])) if rows and rows[0].get('invoices') is not None else 0
+
+        # Check if user requested a comparison with previous year
+        if is_compare and prev_date_filter:
+            prev_sql = f"""
+                SELECT sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
+                       sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
+                       count(DISTINCT if(s.sold_price > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices
+                FROM azure_sales_report s
+                LEFT JOIN item_master im ON im.item_code = s.item_code
+                WHERE {prev_date_filter}
+                  AND s.branch = '{target_branch_code}'
+                  AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')
+            """
+            prev_rows = run_sql(prev_sql)
+            rev_prev = float(prev_rows[0]['revenue']) if prev_rows and prev_rows[0].get('revenue') is not None else 0
+            units_prev = int(float(prev_rows[0]['units'])) if prev_rows and prev_rows[0].get('units') is not None else 0
+            inv_prev = int(float(prev_rows[0]['invoices'])) if prev_rows and prev_rows[0].get('invoices') is not None else 0
+
+            diff_units = units - units_prev
+            pct_units = (diff_units / units_prev * 100) if units_prev > 0 else 0
+            diff_rev = rev - rev_prev
+            pct_rev = (diff_rev / rev_prev * 100) if rev_prev > 0 else 0
+            trend_u = f"{diff_units:+d} ({pct_units:+.1f}%)"
+            trend_r = f"{format_inr(diff_rev)} ({pct_rev:+.1f}%)"
+            growth_word = "growth" if diff_rev >= 0 else "decline"
+            u_color = "#059669" if diff_units >= 0 else "#ef4444"
+            r_color = "#059669" if diff_rev >= 0 else "#ef4444"
+
+            ans = (
+                f"On **{date_label}**, **{target_branch_name}** generated **{format_inr(rev)}** ({format_inr_exact(rev)}) "
+                f"with **{format_units(units)} units** sold across {format_units(invoices)} invoices, compared to "
+                f"**{format_inr(rev_prev)}** ({format_units(units_prev)} units across {format_units(inv_prev)} invoices) "
+                f"on **{prev_date_label}** of previous year (**{trend_r} revenue {growth_word}**, {trend_u} units)."
+            )
+            cards = [
+                {"label": f"{date_label} Sales", "value": format_inr(rev), "color": "#2563eb"},
+                {"label": f"{prev_date_label} Sales", "value": format_inr(rev_prev), "color": "#6b7280"},
+                {"label": "Revenue Growth (YoY)", "value": trend_r, "color": r_color},
+                {"label": "Unit Growth (YoY)", "value": trend_u, "color": u_color}
+            ]
+            table = {
+                "headers": ["Metric", date_label, prev_date_label, "YoY Variance"],
+                "rows": [
+                    ["Net Sales Revenue", format_inr_exact(rev), format_inr_exact(rev_prev), trend_r],
+                    ["Units Sold", f"{units:,} units", f"{units_prev:,} units", trend_u],
+                    ["Customer Invoices", f"{invoices:,}", f"{inv_prev:,}", f"{invoices - inv_prev:+d}"],
+                    ["Avg Order Value (AOV)", format_inr_exact(rev / max(invoices, 1)), format_inr_exact(rev_prev / max(inv_prev, 1)), f"{format_inr_exact((rev / max(invoices, 1)) - (rev_prev / max(inv_prev, 1)))}"]
+                ]
+            }
+            return {
+                "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
+                "suggestions": [
+                    f"Top products at {target_branch_name} on {start_date}",
+                    f"How much Mobile was sold in {target_branch_name} on {start_date}?",
+                    f"What was total company revenue on {start_date}?"
+                ]
+            }
 
         # Query top product categories for this store on this date
         p_sql = f"""
@@ -659,6 +808,65 @@ def answer_with_nlp(question):
         main_sales = retail_sales if retail_sales > 0 else gross_sales
         main_units = retail_units if retail_sales > 0 else int(float(r.get('total_units') or 0))
         main_inv   = retail_inv if retail_sales > 0 else int(float(r.get('total_invoices') or 0))
+
+        # Check if user requested a comparison with previous year
+        if is_compare and prev_date_filter:
+            prev_sql = f"""
+                SELECT 
+                    sumIf(toFloat64(s.sold_price) * toInt64(s.qty), s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME') as retail_sales,
+                    sumIf(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty)), s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME') as retail_units,
+                    count(DISTINCT if(s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME' AND s.sold_price > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as retail_invoices,
+                    count(DISTINCT if(s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME', s.branch, null)) as retail_branches
+                FROM azure_sales_report s
+                LEFT JOIN item_master im ON im.item_code = s.item_code
+                WHERE {prev_date_filter}
+            """
+            prev_rows = run_sql(prev_sql)
+            prev_r = prev_rows[0] if prev_rows else {}
+            sales_prev = float(prev_r.get('retail_sales') or 0)
+            units_prev = int(float(prev_r.get('retail_units') or 0))
+            inv_prev = int(float(prev_r.get('retail_invoices') or 0))
+            branches_prev = int(float(prev_r.get('retail_branches') or 0))
+
+            diff_rev = main_sales - sales_prev
+            pct_rev = (diff_rev / sales_prev * 100) if sales_prev > 0 else 0
+            diff_units = main_units - units_prev
+            pct_units = (diff_units / units_prev * 100) if units_prev > 0 else 0
+
+            trend_r = f"{format_inr(diff_rev)} ({pct_rev:+.1f}%)"
+            trend_u = f"{diff_units:+d} ({pct_units:+.1f}%)"
+            growth_word = "growth" if diff_rev >= 0 else "decline"
+            r_color = "#059669" if diff_rev >= 0 else "#ef4444"
+            u_color = "#059669" if diff_units >= 0 else "#ef4444"
+
+            ans = (
+                f"On **{date_label}**, **Retail Store Net Sales** were **{format_inr(main_sales)}** ({format_inr_exact(main_sales)} across {retail_branches} stores), "
+                f"compared to **{format_inr(sales_prev)}** ({format_inr_exact(sales_prev)} across {branches_prev} stores) "
+                f"on **{prev_date_label}** of previous year (**{trend_r} revenue {growth_word}**, {trend_u} units)."
+            )
+            cards = [
+                {"label": f"{date_label} Sales", "value": format_inr(main_sales), "color": "#2563eb"},
+                {"label": f"{prev_date_label} Sales", "value": format_inr(sales_prev), "color": "#6b7280"},
+                {"label": "Revenue Growth (YoY)", "value": trend_r, "color": r_color},
+                {"label": "Unit Growth (YoY)", "value": trend_u, "color": u_color}
+            ]
+            table = {
+                "headers": ["Metric", date_label, prev_date_label, "YoY Variance"],
+                "rows": [
+                    ["Retail Store Sales", format_inr_exact(main_sales), format_inr_exact(sales_prev), trend_r],
+                    ["Total Units Sold", f"{main_units:,} units", f"{units_prev:,} units", trend_u],
+                    ["Customer Invoices", f"{main_inv:,}", f"{inv_prev:,}", f"{main_inv - inv_prev:+d}"],
+                    ["Active Branches", f"{retail_branches}", f"{branches_prev}", f"{retail_branches - branches_prev:+d}"]
+                ]
+            }
+            return {
+                "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
+                "suggestions": [
+                    f"Which product was most sold on {start_date}?",
+                    f"How much TV was sold on {start_date}?",
+                    f"Top branches on {start_date}"
+                ]
+            }
 
         # Get top product on this date for added insight
         p_sql = f"""
