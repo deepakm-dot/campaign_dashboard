@@ -346,7 +346,8 @@ def answer_with_nlp(question):
             FROM azure_sales_report s
             LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE {date_filter}
-              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'D SPARE', 'SPARE', 'FIXED ASSETS')
+              AND s.branch NOT IN ('SMC', '3GH')
+              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'D SPARE', 'SPARE', 'FIXED ASSETS', 'DEMO', 'DEMO ACCESSORIES')
             GROUP BY product
             ORDER BY revenue DESC
             LIMIT 5
@@ -379,6 +380,7 @@ def answer_with_nlp(question):
             FROM azure_sales_report s
             LEFT JOIN branch_master bm ON bm.code = s.branch
             WHERE {date_filter}
+              AND s.branch NOT IN ('SMC', '3GH')
             GROUP BY branch_name
             ORDER BY revenue DESC
             LIMIT 5
@@ -403,18 +405,33 @@ def answer_with_nlp(question):
 
     # 6. TOTAL SALE ON A SPECIFIC DATE OR MONTH (e.g. "what was the sale on a specific date")
     sql = f"""
-        SELECT sum(toFloat64(sold_price) * toInt64(qty)) as total_sales,
-               sum(toInt64(qty)) as total_units,
-               count(DISTINCT invoice_no) as total_invoices
-        FROM azure_sales_report
-        WHERE {date_filter_raw}
+        SELECT 
+            sumIf(toFloat64(s.sold_price) * toInt64(s.qty), s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME') as retail_sales,
+            sumIf(toInt64(s.qty), s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME') as retail_units,
+            count(DISTINCT if(s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME', s.invoice_no, null)) as retail_invoices,
+            count(DISTINCT if(s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME', s.branch, null)) as retail_branches,
+            sumIf(toFloat64(s.sold_price) * toInt64(s.qty), s.branch IN ('SMC', '3GH') OR coalesce(im.product, '') = 'SCHEME') as internal_schemes_demo,
+            sum(toFloat64(s.sold_price) * toInt64(s.qty)) as total_sales,
+            sum(toInt64(s.qty)) as total_units,
+            count(DISTINCT s.invoice_no) as total_invoices
+        FROM azure_sales_report s
+        LEFT JOIN item_master im ON im.item_code = s.item_code
+        WHERE {date_filter}
     """
     rows = run_sql(sql)
-    if rows and rows[0].get('total_sales') is not None:
+    if rows and (rows[0].get('retail_sales') is not None or rows[0].get('total_sales') is not None):
         r = rows[0]
-        total_sales = float(r.get('total_sales') or 0)
-        total_units = int(r.get('total_units') or 0)
-        total_inv   = int(r.get('total_invoices') or 0)
+        retail_sales    = float(r.get('retail_sales') or 0)
+        retail_units    = int(float(r.get('retail_units') or 0))
+        retail_inv      = int(float(r.get('retail_invoices') or 0))
+        retail_branches = int(float(r.get('retail_branches') or 0))
+        internal_amt    = float(r.get('internal_schemes_demo') or 0)
+        gross_sales     = float(r.get('total_sales') or 0)
+
+        # Prefer retail_sales when available, fallback to total_sales
+        main_sales = retail_sales if retail_sales > 0 else gross_sales
+        main_units = retail_units if retail_sales > 0 else int(float(r.get('total_units') or 0))
+        main_inv   = retail_inv if retail_sales > 0 else int(float(r.get('total_invoices') or 0))
 
         # Get top product on this date for added insight
         p_sql = f"""
@@ -423,7 +440,8 @@ def answer_with_nlp(question):
             FROM azure_sales_report s
             LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE {date_filter}
-              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'D SPARE', 'SPARE')
+              AND s.branch NOT IN ('SMC', '3GH')
+              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'D SPARE', 'SPARE', 'DEMO', 'DEMO ACCESSORIES')
             GROUP BY product
             ORDER BY revenue DESC
             LIMIT 1
@@ -431,14 +449,18 @@ def answer_with_nlp(question):
         p_rows = run_sql(p_sql)
         p_extra = ""
         if p_rows and p_rows[0].get('product'):
-            p_extra = f" The leading category was **{p_rows[0]['product']}** with **{format_inr(p_rows[0]['revenue'])}**."
+            p_extra = f" The leading retail category was **{p_rows[0]['product']}** with **{format_inr(p_rows[0]['revenue'])}**."
 
-        ans = f"On **{date_label}**, total sales were **{format_inr(total_sales)}** ({format_inr_exact(total_sales)}) with **{format_units(total_units)} units** sold across **{format_units(total_inv)} invoices**.{p_extra}"
+        reconcile_note = ""
+        if internal_amt > 0:
+            reconcile_note = f" *(Corporate Gross Billed including HQ demo allocations & scheme vouchers: {format_inr(gross_sales)})*"
+
+        ans = f"On **{date_label}**, **Retail Store Net Sales** were **{format_inr(main_sales)}** ({format_inr_exact(main_sales)}) across **{retail_branches} branches** with **{format_units(main_units)} units** sold across **{format_units(main_inv)} customer invoices**.{p_extra}{reconcile_note}"
         cards = [
-            {"label": "Total Sales", "value": format_inr(total_sales), "color": "#059669"},
-            {"label": "Units Sold", "value": format_units(total_units), "color": "#2563eb"},
-            {"label": "Total Invoices", "value": format_units(total_inv), "color": "#7c3aed"},
-            {"label": "Date", "value": date_label, "color": "#d97706"}
+            {"label": "Retail Store Sales", "value": format_inr(main_sales), "color": "#059669"},
+            {"label": "Units Sold", "value": format_units(main_units), "color": "#2563eb"},
+            {"label": "Invoices", "value": format_units(main_inv), "color": "#7c3aed"},
+            {"label": "Active Stores", "value": format_units(retail_branches), "color": "#d97706"}
         ]
         return {
             "answer": ans, "sql": sql.strip(), "cards": cards,
