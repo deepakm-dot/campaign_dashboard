@@ -213,6 +213,50 @@ def extract_brand(text):
             return b.upper()
     return None
 
+_BRANCH_MAP_CACHE = None
+
+def get_branch_map():
+    global _BRANCH_MAP_CACHE
+    if _BRANCH_MAP_CACHE is not None:
+        return _BRANCH_MAP_CACHE
+    try:
+        rows = run_sql("SELECT code, branch_name FROM branch_master")
+        b_map = {}
+        for r in rows:
+            code = r['code'].strip()
+            name = r['branch_name'].strip()
+            b_map[name.upper()] = (code, name)
+            # Normalized without duplicate letters (e.g. mannarkkad -> mannarkad)
+            norm_name = re.sub(r'([a-zA-Z])\1+', r'\1', name).upper()
+            if norm_name != name.upper():
+                b_map[norm_name] = (code, name)
+            # Store code if 3+ chars
+            if len(code) >= 3:
+                b_map[code.upper()] = (code, name)
+            # Town / first word if length >= 5
+            town = name.split()[0].upper()
+            if len(town) >= 5 and town not in b_map:
+                b_map[town] = (code, name)
+        _BRANCH_MAP_CACHE = b_map
+        return _BRANCH_MAP_CACHE
+    except Exception as e:
+        print(f"[Branch Map Error] {e}")
+        return {}
+
+def extract_branch(text):
+    b_map = get_branch_map()
+    if not b_map:
+        return None, None
+    t_raw = text.upper()
+    t_norm = re.sub(r'([A-Z])\1+', r'\1', t_raw)
+    for k in sorted(b_map.keys(), key=len, reverse=True):
+        if len(k) < 3:
+            continue
+        pattern = r'\b' + re.escape(k) + r'\b'
+        if re.search(pattern, t_raw) or re.search(pattern, t_norm):
+            return b_map[k]
+    return None, None
+
 def answer_with_nlp(question):
     """
     Deterministic semantic NLP engine that understands sales, products,
@@ -223,6 +267,7 @@ def answer_with_nlp(question):
     start_date, end_date, date_label, is_month = extract_dates(question)
     product, item_term, display_name = extract_product_and_item(question)
     brand = extract_brand(question)
+    target_branch_code, target_branch_name = extract_branch(question)
 
     is_qty_query = any(k in q_low for k in [
         'how many', 'quantity', 'units', 'volume', 'qty', 'count',
@@ -357,6 +402,10 @@ def answer_with_nlp(question):
         else:
             display_title = display_name
 
+        if target_branch_code:
+            item_cond += f" AND s.branch = '{target_branch_code}'"
+            display_title = f"{display_title} at {target_branch_name}"
+
         sql = f"""
             SELECT sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
                    sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
@@ -430,6 +479,65 @@ def answer_with_nlp(question):
         return {
             "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
             "suggestions": [f"Top brands for {display_title} on {start_date}", f"What was the total sale on {start_date}?", f"Top branches for {display_title} on {start_date}"]
+        }
+
+    # 3. SINGLE BRANCH / STORE SALES (e.g. "what is total revenue on 01-06-2026 by balussery future")
+    if target_branch_code:
+        sql = f"""
+            SELECT sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
+                   sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
+                   count(DISTINCT if(s.sold_price > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices
+            FROM azure_sales_report s
+            LEFT JOIN item_master im ON im.item_code = s.item_code
+            WHERE {date_filter}
+              AND s.branch = '{target_branch_code}'
+              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')
+        """
+        rows = run_sql(sql)
+        rev = float(rows[0]['revenue']) if rows and rows[0].get('revenue') is not None else 0
+        units = int(float(rows[0]['units'])) if rows and rows[0].get('units') is not None else 0
+        invoices = int(float(rows[0]['invoices'])) if rows and rows[0].get('invoices') is not None else 0
+
+        # Query top product categories for this store on this date
+        p_sql = f"""
+            SELECT coalesce(im.product, 'Other') as product,
+                   sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
+                   round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue
+            FROM azure_sales_report s
+            LEFT JOIN item_master im ON im.item_code = s.item_code
+            WHERE {date_filter}
+              AND s.branch = '{target_branch_code}'
+              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')
+            GROUP BY product
+            ORDER BY revenue DESC
+            LIMIT 5
+        """
+        p_rows = run_sql(p_sql)
+        top_prod_txt = ""
+        if p_rows:
+            top_prod_txt = f" Leading category was **{p_rows[0]['product']}** with **{format_inr(p_rows[0]['revenue'])}** ({format_units(p_rows[0]['units'])} units)."
+
+        ans = f"On **{date_label}**, **{target_branch_name}** generated **{format_inr(rev)}** ({format_inr_exact(rev)}) in net sales with **{format_units(units)} units** sold across **{format_units(invoices)} customer invoices**.{top_prod_txt}"
+        cards = [
+            {"label": "Store Net Sales", "value": format_inr(rev), "color": "#059669"},
+            {"label": "Units Sold", "value": format_units(units), "color": "#2563eb"},
+            {"label": "Customer Invoices", "value": format_units(invoices), "color": "#7c3aed"},
+            {"label": "Store Branch", "value": target_branch_name, "color": "#d97706"}
+        ]
+        table = None
+        if p_rows:
+            table = {
+                "headers": ["Product Category", "Revenue", "Units Sold"],
+                "rows": [[r['product'], format_inr_exact(r['revenue']), format_units(r['units'])] for r in p_rows]
+            }
+
+        return {
+            "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
+            "suggestions": [
+                f"How much Mobile was sold in {target_branch_name} on {start_date}?",
+                f"How much TV was sold in {target_branch_name} on {start_date}?",
+                f"What was the total company sales on {start_date}?"
+            ]
         }
 
     # 4. MOST / LEAST SOLD PRODUCT (e.g. "which product was most sold on this date" or "least sold product")
