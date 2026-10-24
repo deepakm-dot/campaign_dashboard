@@ -140,8 +140,28 @@ def extract_dates(text):
 
     return None, None, None, False
 
+# Specific items/appliances matched against item_name
+ITEM_SYNONYMS = {
+    'CEILING FAN': ['ceiling fan', 'ceiling fans', 'bldc fan', 'bldc ceiling fan'],
+    'FAN': ['fan', 'fans', 'pedestal fan', 'wall fan', 'table fan', 'exhaust fan'],
+    'MIXER': ['mixer', 'grinder', 'mixer grinder', 'mixie', 'juicer'],
+    'IRON': ['iron', 'iron box', 'steam iron', 'dry iron'],
+    'KETTLE': ['kettle', 'electric kettle'],
+    'WATER PURIFIER': ['water purifier', 'purifier', 'ro water', 'water filter'],
+    'MICROWAVE': ['microwave', 'microwave oven', 'oven', 'otg', 'convection oven'],
+    'INDUCTION': ['induction', 'induction cooker', 'induction cooktop', 'cooktop'],
+    'AIR FRYER': ['air fryer', 'airfryer', 'fryer'],
+    'GEYSER': ['geyser', 'water heater', 'heater'],
+    'SOUNDBAR': ['soundbar', 'sound bar', 'home theatre', 'speaker', 'speakers'],
+    'VACUUM': ['vacuum cleaner', 'vacuum', 'cleaner'],
+    'TABLET': ['tablet', 'tablets', 'ipad', 'tab'],
+    'PRINTER': ['printer', 'printers'],
+    'DISH WASHER': ['dishwasher', 'dish washer'],
+    'DRYER': ['dryer', 'clothes dryer']
+}
+
 PRODUCT_SYNONYMS = {
-    'TV': ['tv', 'television', 'televisions', 'led tv', 'smart tv', 'oled'],
+    'TV': ['tv', 'television', 'televisions', 'led tv', 'smart tv', 'oled', 'qled'],
     'MOBILE': ['mobile', 'mobiles', 'smartphone', 'smartphones', 'phone', 'phones', 'handset'],
     'LAPTOP': ['laptop', 'laptops', 'notebook', 'pc', 'computer'],
     'REFRIGERATORS': ['refrigerator', 'refrigerators', 'fridge', 'fridges', 'deep freezer'],
@@ -149,23 +169,35 @@ PRODUCT_SYNONYMS = {
     'AIR CONDITIONER': ['ac', 'air conditioner', 'airconditioner', 'air conditioners', 'cooling'],
     'SMART WATCH': ['smart watch', 'smartwatch', 'smart watches', 'wearable watch'],
     'EAR WEARABLES': ['earbuds', 'earphone', 'earphones', 'tws', 'airpods', 'headphone', 'headphones'],
-    'AUDIO': ['audio', 'soundbar', 'speaker', 'speakers', 'home theatre'],
-    'SMALL APPLIANCES': ['small appliance', 'small appliances', 'mixer', 'grinder', 'iron box', 'kettle']
+    'AUDIO': ['audio', 'soundbar', 'speaker', 'speakers'],
+    'SMALL APPLIANCES': ['small appliance', 'small appliances']
 }
 
-def extract_product(text):
+def extract_product_and_item(text):
     t = text.lower()
-    for prod_key, syns in PRODUCT_SYNONYMS.items():
-        for syn in syns:
+    # 1. First check specific appliance items (longer phrases first, e.g. "ceiling fan" before "fan")
+    for item_key, syns in ITEM_SYNONYMS.items():
+        for syn in sorted(syns, key=len, reverse=True):
             if re.search(r'\b' + re.escape(syn) + r'\b', t):
-                return prod_key
-    return None
+                display = syn.title()
+                return None, item_key, display
+                
+    # 2. Check general product categories
+    for prod_key, syns in PRODUCT_SYNONYMS.items():
+        for syn in sorted(syns, key=len, reverse=True):
+            if re.search(r'\b' + re.escape(syn) + r'\b', t):
+                display = prod_key.title()
+                return prod_key, None, display
+                
+    return None, None, None
 
 BRANDS = [
     'samsung', 'apple', 'lg', 'sony', 'xiaomi', 'mi', 'redmi', 'vivo', 'oppo',
     'oneplus', 'realme', 'motorola', 'whirlpool', 'haier', 'godrej', 'voltas',
     'lloyd', 'daikin', 'panasonic', 'dell', 'hp', 'lenovo', 'asus', 'acer',
-    'boat', 'noise', 'fire-boltt', 'impex', 'philips', 'preethi', 'bajaj'
+    'boat', 'noise', 'fire-boltt', 'impex', 'philips', 'preethi', 'bajaj',
+    'luker', 'v guard', 'v-guard', 'usha', 'atomberg', 'havells', 'crompton',
+    'orient', 'morphy richards', 'prestige', 'butterfly', 'sujata'
 ]
 
 def extract_brand(text):
@@ -173,6 +205,7 @@ def extract_brand(text):
     for b in BRANDS:
         if re.search(r'\b' + re.escape(b) + r'\b', t):
             if b in ('mi', 'redmi'): return 'XIAOMI'
+            if b in ('v-guard', 'v guard'): return 'V GUARD'
             return b.upper()
     return None
 
@@ -184,8 +217,13 @@ def answer_with_nlp(question):
     q_low = question.lower().strip()
     
     start_date, end_date, date_label, is_month = extract_dates(question)
-    product = extract_product(question)
+    product, item_term, display_name = extract_product_and_item(question)
     brand = extract_brand(question)
+
+    is_qty_query = any(k in q_low for k in [
+        'how many', 'quantity', 'units', 'volume', 'qty', 'count',
+        'number of', 'how much unit', 'in terms of quantity', 'how much piece'
+    ])
 
     # Default date if not specified: latest date with sales in 2026
     # If question asks about "a specific date" without giving one, pick 2026-08-14 as the benchmark
@@ -271,85 +309,92 @@ def answer_with_nlp(question):
                     "suggestions": ["Top 5 campaigns by revenue", "What was the sale on 2026-08-14?", "Which product was most sold on 2026-08-14?"]
                 }
 
-    # 2. SPECIFIC PRODUCT + BRAND SALES (e.g. "how much samsung tv was sold on date")
-    if product and brand:
-        sql = f"""
-            SELECT coalesce(im.brand, '{brand}') as brand,
-                   coalesce(im.product, '{product}') as product,
-                   sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
-                   sum(toInt64(s.qty)) as units
-            FROM azure_sales_report s
-            LEFT JOIN item_master im ON im.item_code = s.item_code
-            WHERE {date_filter}
-              AND upper(im.brand) = '{brand}'
-              AND upper(im.product) LIKE '%{product}%'
-            GROUP BY brand, product
-        """
-        rows = run_sql(sql)
-        rev = rows[0]['revenue'] if rows else 0
-        units = rows[0]['units'] if rows else 0
-        ans = f"On **{date_label}**, total **{brand} {product}** sales were **{format_inr(rev)}** ({format_inr_exact(rev)}) with **{format_units(units)} units** sold."
-        cards = [
-            {"label": f"{brand} {product} Revenue", "value": format_inr(rev), "color": "#059669"},
-            {"label": "Units Sold", "value": format_units(units), "color": "#2563eb"},
-            {"label": "Period", "value": date_label, "color": "#7c3aed"}
-        ]
-        return {
-            "answer": ans, "sql": sql.strip(), "cards": cards,
-            "suggestions": [f"Top brands for {product} on {start_date}", f"Total {product} sales on {start_date}", f"What was the overall sale on {start_date}?"]
-        }
+    # 2. SPECIFIC PRODUCT / ITEM SALES (e.g. "how many ceiling fan sold", "tv sales", "samsung mobile sold", etc.)
+    if product or item_term:
+        if item_term:
+            item_cond = f"upper(im.item_name) LIKE '%{item_term}%' AND coalesce(im.product, '') NOT IN ('OSG WARRANTY', 'FIXED ASSETS', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+        else:
+            item_cond = f"upper(im.product) LIKE '%{product}%' AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')"
 
-    # 3. SPECIFIC PRODUCT SALES (e.g. "how much tv was sold on 2026-08-14")
-    if product:
+        if brand:
+            item_cond += f" AND upper(im.brand) = '{brand}'"
+            display_title = f"{brand} {display_name}"
+        else:
+            display_title = display_name
+
         sql = f"""
-            SELECT coalesce(im.product, '{product}') as product,
-                   sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
-                   sum(toInt64(s.qty)) as units
+            SELECT sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
+                   sum(toInt64(s.qty)) as units,
+                   count(DISTINCT s.invoice_no) as invoices,
+                   count(DISTINCT s.branch) as branches
             FROM azure_sales_report s
             LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE {date_filter}
-              AND upper(im.product) LIKE '%{product}%'
-              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR')
-            GROUP BY product
+              AND s.branch NOT IN ('SMC', '3GH')
+              AND {item_cond}
         """
         rows = run_sql(sql)
-        rev = rows[0]['revenue'] if rows else 0
-        units = rows[0]['units'] if rows else 0
-        
-        # Also query top 3 brands for this product
-        b_sql = f"""
-            SELECT coalesce(im.brand, 'Other') as brand,
-                   sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
-                   sum(toInt64(s.qty)) as units
-            FROM azure_sales_report s
-            LEFT JOIN item_master im ON im.item_code = s.item_code
-            WHERE {date_filter}
-              AND upper(im.product) LIKE '%{product}%'
-              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR')
-            GROUP BY brand
-            ORDER BY revenue DESC
-            LIMIT 5
-        """
-        b_rows = run_sql(b_sql)
+        rev = float(rows[0]['revenue']) if rows and rows[0].get('revenue') is not None else 0
+        units = int(float(rows[0]['units'])) if rows and rows[0].get('units') is not None else 0
+        invoices = int(float(rows[0]['invoices'])) if rows and rows[0].get('invoices') is not None else 0
+        branches = int(float(rows[0]['branches'])) if rows and rows[0].get('branches') is not None else 0
+
+        # Query top brands if no specific brand was requested
+        b_rows = []
         top_brand_txt = ""
-        if b_rows:
-            top_brand_txt = f" Top brand was **{b_rows[0]['brand']}** with **{format_inr(b_rows[0]['revenue'])}** ({format_units(b_rows[0]['units'])} units)."
+        if not brand:
+            b_sql = f"""
+                SELECT coalesce(im.brand, 'Other') as brand,
+                       sum(toInt64(s.qty)) as units,
+                       sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue
+                FROM azure_sales_report s
+                LEFT JOIN item_master im ON im.item_code = s.item_code
+                WHERE {date_filter}
+                  AND s.branch NOT IN ('SMC', '3GH')
+                  AND {item_cond}
+                GROUP BY brand
+                ORDER BY {'units' if is_qty_query else 'revenue'} DESC
+                LIMIT 5
+            """
+            b_rows = run_sql(b_sql)
+            if b_rows:
+                if is_qty_query:
+                    top_brand_txt = f" Top brand was **{b_rows[0]['brand']}** with **{format_units(b_rows[0]['units'])} units**."
+                else:
+                    top_brand_txt = f" Top brand was **{b_rows[0]['brand']}** with **{format_inr(b_rows[0]['revenue'])}** ({format_units(b_rows[0]['units'])} units)."
 
-        ans = f"On **{date_label}**, total **{product}** sales were **{format_inr(rev)}** ({format_inr_exact(rev)}) with **{format_units(units)} units** sold across all branches.{top_brand_txt}"
-        cards = [
-            {"label": f"Total {product} Revenue", "value": format_inr(rev), "color": "#059669"},
-            {"label": "Units Sold", "value": format_units(units), "color": "#2563eb"},
-            {"label": "Date", "value": date_label, "color": "#7c3aed"}
-        ]
-        table = None
-        if b_rows:
-            table = {
-                "headers": ["Brand", "Revenue", "Units Sold"],
-                "rows": [[r['brand'], format_inr_exact(r['revenue']), format_units(r['units'])] for r in b_rows]
-            }
+        if is_qty_query:
+            ans = f"On **{date_label}**, a total of **{format_units(units)} units** of **{display_title}** were sold across **{branches} branches** (generating **{format_inr(rev)}** in revenue across {format_units(invoices)} customer invoices).{top_brand_txt}"
+            cards = [
+                {"label": f"{display_title} Units Sold", "value": format_units(units), "color": "#059669"},
+                {"label": "Total Revenue", "value": format_inr(rev), "color": "#2563eb"},
+                {"label": "Invoices", "value": format_units(invoices), "color": "#7c3aed"},
+                {"label": "Active Stores", "value": format_units(branches), "color": "#d97706"}
+            ]
+            table = None
+            if b_rows:
+                table = {
+                    "headers": ["Brand", "Units Sold", "Revenue"],
+                    "rows": [[r['brand'], format_units(r['units']), format_inr_exact(r['revenue'])] for r in b_rows]
+                }
+        else:
+            ans = f"On **{date_label}**, total **{display_title}** sales were **{format_inr(rev)}** ({format_inr_exact(rev)}) with **{format_units(units)} units** sold across **{branches} branches**.{top_brand_txt}"
+            cards = [
+                {"label": f"Total {display_title} Revenue", "value": format_inr(rev), "color": "#059669"},
+                {"label": "Units Sold", "value": format_units(units), "color": "#2563eb"},
+                {"label": "Invoices", "value": format_units(invoices), "color": "#7c3aed"},
+                {"label": "Date", "value": date_label, "color": "#d97706"}
+            ]
+            table = None
+            if b_rows:
+                table = {
+                    "headers": ["Brand", "Revenue", "Units Sold"],
+                    "rows": [[r['brand'], format_inr_exact(r['revenue']), format_units(r['units'])] for r in b_rows]
+                }
+
         return {
             "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
-            "suggestions": [f"Which product was most sold on {start_date}?", f"What was the total sale on {start_date}?", f"Top branches for {product} on {start_date}"]
+            "suggestions": [f"Top brands for {display_title} on {start_date}", f"What was the total sale on {start_date}?", f"Top branches for {display_title} on {start_date}"]
         }
 
     # 4. MOST / LEAST SOLD PRODUCT (e.g. "which product was most sold on this date" or "least sold product")
