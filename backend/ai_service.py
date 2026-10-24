@@ -318,16 +318,38 @@ def answer_with_nlp(question):
         if item_term == 'PEDESTAL FAN':
             item_cond = "(upper(im.item_name) LIKE '%PEDESTAL FAN%' OR upper(im.item_name) LIKE '%PEDESTAL%') AND coalesce(im.product, '') NOT IN ('OSG WARRANTY', 'FIXED ASSETS', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
         elif item_term == 'WALL FAN':
-            item_cond = "(upper(im.item_name) LIKE '%WALL FAN%' OR upper(im.item_name) LIKE '%WALL MOUNT FAN%') AND coalesce(im.product, '') NOT IN ('OSG WARRANTY', 'FIXED ASSETS', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+            item_cond = "(upper(im.item_name) LIKE '%WALL FAN%' OR upper(im.item_name) LIKE '%WALL MOUNT%') AND coalesce(im.product, '') NOT IN ('OSG WARRANTY', 'FIXED ASSETS', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
         elif item_term == 'TABLE FAN':
             item_cond = "(upper(im.item_name) LIKE '%TABLE FAN%' OR upper(im.item_name) LIKE '%DESK FAN%') AND coalesce(im.product, '') NOT IN ('OSG WARRANTY', 'FIXED ASSETS', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+        elif item_term == 'CEILING FAN':
+            item_cond = "(upper(im.item_name) LIKE '%CEILING FAN%' OR upper(im.item_name) LIKE '%CEILING%') AND coalesce(im.product, '') NOT IN ('OSG WARRANTY', 'FIXED ASSETS', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+        elif item_term == 'EXHAUST FAN':
+            item_cond = "upper(im.item_name) LIKE '%EXHAUST%' AND coalesce(im.product, '') NOT IN ('OSG WARRANTY', 'FIXED ASSETS', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+        elif item_term == 'MICROWAVE':
+            item_cond = "(im.product = 'MICROWAVE OVEN' OR upper(im.item_name) LIKE '%MICROWAVE%' OR upper(im.item_name) LIKE '%CONVECTION%') AND coalesce(im.product, '') NOT IN ('OSG WARRANTY', 'FIXED ASSETS', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
         elif item_term:
             item_cond = f"upper(im.item_name) LIKE '%{item_term}%' AND coalesce(im.product, '') NOT IN ('OSG WARRANTY', 'FIXED ASSETS', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
         else:
             if product == 'TV':
                 item_cond = "(upper(im.product) = 'TV' OR im.item_category = 'Tv 18 %' OR s.item_code LIKE 'TV%') AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')"
+            elif product == 'MOBILE':
+                item_cond = "(upper(im.product) = 'MOBILE' OR (s.item_code LIKE 'MOB%' AND coalesce(im.product, '') != 'MOBILE ANTIVIRUS')) AND coalesce(im.product, '') NOT IN ('SCHEME', 'MOBILE ANTIVIRUS', 'DEMO', 'DEMO ACCESSORIES')"
+            elif product == 'LAPTOP':
+                item_cond = "(upper(im.product) = 'LAPTOP' OR s.item_code LIKE 'LAP%') AND coalesce(im.product, '') NOT IN ('SCHEME', 'LAPTOP BAG', 'DEMO', 'DEMO ACCESSORIES')"
+            elif product == 'AIR CONDITIONER':
+                item_cond = "(upper(im.product) = 'AIR CONDITIONER' OR (s.item_code LIKE 'AC%' AND coalesce(im.product, '') = '')) AND coalesce(im.product, '') NOT IN ('AC OUTDOOR', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+            elif product == 'REFRIGERATORS':
+                item_cond = "(upper(im.product) IN ('REFRIGERATORS', 'FREEZER') OR s.item_code LIKE 'REF%') AND coalesce(im.product, '') NOT IN ('SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+            elif product == 'WASHING MACHINES':
+                item_cond = "(upper(im.product) = 'WASHING MACHINES' OR s.item_code LIKE 'WM%') AND coalesce(im.product, '') NOT IN ('SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+            elif product == 'TABLET':
+                item_cond = "(upper(im.product) = 'TABLET' OR s.item_code LIKE 'TAB%') AND coalesce(im.product, '') NOT IN ('SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+            elif product == 'SMART WATCH':
+                item_cond = "upper(im.product) = 'SMART WATCH' AND coalesce(im.product, '') NOT IN ('SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+            elif product == 'EAR WEARABLES':
+                item_cond = "upper(im.product) = 'EAR WEARABLES' AND coalesce(im.product, '') NOT IN ('SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
             else:
-                item_cond = f"upper(im.product) LIKE '%{product}%' AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')"
+                item_cond = f"upper(im.product) = '{product}' AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')"
 
         if brand:
             item_cond += f" AND upper(im.brand) = '{brand}'"
