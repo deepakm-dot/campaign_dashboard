@@ -302,7 +302,7 @@ def _fmt_pct(new, old):
     p = _pct(new, old)
     return f"{p * 100:+.1f}%" if p is not None else ("new" if new else "-")
 
-def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, product=None, lfl=True):
+def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, product=None, lfl=True, direction='both'):
     """Store x product-category comparison between two periods (A = base/earlier, B = current/later).
     Like-for-like: only stores that had sales in period A. Returns a chat response dict with an Excel download."""
     import uuid
@@ -370,8 +370,9 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
         st['ua'] += x['ua']; st['ub'] += x['ub']; st['ra'] += x['ra']; st['rb'] += x['rb']
         if x['ub'] < x['ua']: st['dec'] += 1
         elif x['ub'] > x['ua']: st['inc'] += 1
-        ct = cats.setdefault(x['cat'], {'cat': x['cat'], 'ua': 0, 'ub': 0, 'ra': 0.0, 'rb': 0.0, 'sdec': 0, 'sinc': 0, 'sa': 0})
+        ct = cats.setdefault(x['cat'], {'cat': x['cat'], 'ua': 0, 'ub': 0, 'ra': 0.0, 'rb': 0.0, 'sdec': 0, 'sinc': 0, 'sa': 0, 'sany': 0})
         ct['ua'] += x['ua']; ct['ub'] += x['ub']; ct['ra'] += x['ra']; ct['rb'] += x['rb']
+        if x['ua'] > 0 or x['ub'] > 0: ct['sany'] += 1
         if x['ua'] > 0: ct['sa'] += 1
         if x['ub'] < x['ua']: ct['sdec'] += 1
         elif x['ub'] > x['ua']: ct['sinc'] += 1
@@ -381,13 +382,46 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
     tot_ra, tot_rb = sum(z['ra'] for z in store_list), sum(z['rb'] for z in store_list)
     dec_stores = [z for z in store_list if z['ub'] < z['ua']]
     pairs_dec = sorted([x for x in rows if x['ub'] < x['ua']], key=lambda x: x['ub'] - x['ua'])
+    inc_stores = sorted([z for z in store_list if z['ub'] > z['ua']], key=lambda z: -(z['ub'] - z['ua']))
+    pairs_inc = sorted([x for x in rows if x['ub'] > x['ua']], key=lambda x: -(x['ub'] - x['ua']))
     store_rank = {z['br']: i for i, z in enumerate(store_list)}
+    store_rank_up = {z['br']: i for i, z in enumerate(sorted(store_list, key=lambda z: -(z['ub'] - z['ua'])))}
+    show_less = direction in ('less', 'both')
+    show_more = direction in ('more', 'both')
 
     # ---- Insight sentences ----
     ins = []
     scope_txt = (branch_name or 'all stores') + (f" / {product}" if product else "") + (" (like-for-like)" if lfl else "")
     ins.append(f"{lab_b} vs {lab_a} ({scope_txt}): units {tot_ua:,} -> {tot_ub:,} ({_fmt_pct(tot_ub, tot_ua)}), revenue Rs {tot_ra:,.0f} -> Rs {tot_rb:,.0f} ({_fmt_pct(tot_rb, tot_ra)}).")
-    if not branch_code:
+    if show_more and not product:
+        up_c = sorted([c for c in cat_list if c['ub'] > c['ua']], key=lambda c: -(c['ub'] - c['ua']))
+        ins.append("Products that sold MORE (all selected categories, by unit gain): " + "; ".join(f"{c['cat']} {c['ua']:,}->{c['ub']:,} ({c['ub'] - c['ua']:+,}, {_fmt_pct(c['ub'], c['ua'])})" for c in up_c) + ".")
+    if show_less and not product:
+        dn_c = sorted([c for c in cat_list if c['ub'] < c['ua']], key=lambda c: c['ub'] - c['ua'])
+        ins.append("Products that sold LESS (by unit drop): " + ("; ".join(f"{c['cat']} {c['ua']:,}->{c['ub']:,} ({c['ub'] - c['ua']:+,}, {_fmt_pct(c['ub'], c['ua'])})" for c in dn_c) or "none") + ".")
+    if show_more:
+        if not branch_code:
+            ins.append(f"{len(inc_stores)} of {len(store_list)} stores sold more units in {lab_b} than in {lab_a}.")
+            for z in inc_stores[:5]:
+                best = sorted([x for x in rows if x['br'] == z['br'] and x['ub'] > x['ua']], key=lambda x: -(x['ub'] - x['ua']))[:3]
+                btxt = ", ".join(f"{w['cat']} ({w['ua']:,}->{w['ub']:,})" for w in best)
+                if product:
+                    ins.append(f"{product} grew most at {z['nm']}: {z['ua']:,}->{z['ub']:,} ({z['ub'] - z['ua']:+,}).")
+                else:
+                    ins.append(f"Biggest unit gain: {z['nm']} {z['ua']:,}->{z['ub']:,} ({z['ub'] - z['ua']:+,}); main drivers: {btxt}.")
+        elif pairs_inc:
+            z = store_list[0] if len(store_list) == 1 else sorted(store_list, key=lambda z: -(z['ub'] - z['ua']))[0]
+            ins.append(f"{z['nm']}: {z['inc']} product categories grew. Biggest gains: " + ", ".join(f"{w['cat']} ({w['ua']:,}->{w['ub']:,})" for w in pairs_inc[:8]) + ".")
+        growers = sorted([c for c in cat_list if c['sinc'] > 0 and c['ub'] > c['ua']], key=lambda c: -c['sinc'])[:6]
+        if growers and not branch_code:
+            ins.append("Growth spread across many stores: " + "; ".join(f"{c['cat']} grew in {c['sinc']} of {c['sany']} stores (total {c['ua']:,}->{c['ub']:,}, {_fmt_pct(c['ub'], c['ua'])})" for c in growers) + ".")
+        multi_up = sorted(inc_stores, key=lambda z: -z['inc'])[:3]
+        if multi_up and not branch_code:
+            ins.append("Stores with most growing categories: " + "; ".join(f"{z['nm']} ({z['inc']} categories)" for z in multi_up) + ".")
+        rev_up_units_down = [z for z in store_list if z['rb'] > z['ra'] and z['ub'] <= z['ua']]
+        if rev_up_units_down and not branch_code:
+            ins.append(f"{len(rev_up_units_down)} stores sold fewer/equal units but earned more revenue (mix shifted to higher-value products).")
+    if show_less and not branch_code:
         ins.append(f"{len(dec_stores)} of {len(store_list)} stores sold fewer units in {lab_b} than in {lab_a}.")
         for z in store_list[:5]:
             if z['ub'] >= z['ua']: break
@@ -397,22 +431,22 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
                 ins.append(f"{product} dropped most at {z['nm']}: {z['ua']:,}->{z['ub']:,} ({z['ub'] - z['ua']:+,}).")
             else:
                 ins.append(f"Biggest unit drop: {z['nm']} {z['ua']:,}->{z['ub']:,} ({z['ub'] - z['ua']:+,}); main drags: {wtxt}.")
-    else:
+    elif show_less:
         z = store_list[0]
         worst = pairs_dec[:8]
         if worst:
             ins.append(f"{z['nm']}: {z['dec']} product categories declined. Biggest drops: " + ", ".join(f"{w['cat']} ({w['ua']:,}->{w['ub']:,})" for w in worst) + ".")
     broad = sorted([c for c in cat_list if c['sdec'] > 0 and c['ub'] < c['ua']], key=lambda c: -c['sdec'])[:5]
-    if broad and not branch_code:
-        ins.append("Declines spread across many stores: " + "; ".join(f"{c['cat']} fell in {c['sdec']} of {c['sa']} stores (total {c['ua']:,}->{c['ub']:,})" for c in broad) + ".")
+    if show_less and broad and not branch_code:
+        ins.append("Declines spread across many stores: " + "; ".join(f"{c['cat']} fell in {c['sdec']} of {c['sany']} stores (total {c['ua']:,}->{c['ub']:,})" for c in broad) + ".")
     multi = sorted(dec_stores, key=lambda z: -z['dec'])[:3]
-    if multi and not branch_code:
+    if show_less and multi and not branch_code:
         ins.append("Stores with most declining categories: " + "; ".join(f"{z['nm']} ({z['dec']} categories)" for z in multi) + ".")
     rev_down_units_up = [z for z in store_list if z['rb'] < z['ra'] and z['ub'] >= z['ua']]
-    if rev_down_units_up and not branch_code:
+    if show_less and rev_down_units_up and not branch_code:
         ins.append(f"{len(rev_down_units_up)} stores kept/raised units but earned less revenue (mix shifted to cheaper products).")
     inactive = [z for z in store_list if z['ub'] == 0 and z['ua'] > 0]
-    if inactive and not branch_code:
+    if show_less and inactive and not branch_code:
         ins.append(f"{len(inactive)} stores had sales in {lab_a} but none in {lab_b} (closed/inactive?): " + ", ".join(z['nm'] for z in inactive[:8]) + ".")
     if new_stores:
         ins.append(f"{len(new_stores)} newly launched stores (no sales in {lab_a}) were excluded from the comparison.")
@@ -470,11 +504,16 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
             ('No sales in ' + lab_b) if z['ub'] == 0 else ('Units down' if z['ub'] < z['ua'] else 'Units up')] for z in store_list],
           num_cols=(3, 4, 5, 7, 8, 9), pct_cols=(6, 10), delta_cols=(5, 9))
 
-    ws2 = wb.create_sheet('Store x Product Decline')
     ordered = sorted(pairs_dec, key=lambda x: (store_rank.get(x['br'], 0), x['ub'] - x['ua']))
-    sheet(ws2, ['Store Code', 'Store', 'Product Category', ua_h, ub_h, 'Unit Change', 'Unit %', ra_h, rb_h, 'Revenue Change'],
-          [[x['br'], x['nm'], x['cat'], x['ua'], x['ub'], x['ub'] - x['ua'], _pct(x['ub'], x['ua']), x['ra'], x['rb'], x['rb'] - x['ra']] for x in ordered],
-          num_cols=(4, 5, 6, 8, 9, 10), pct_cols=(7,), delta_cols=(6, 10))
+    ordered_up = sorted(pairs_inc, key=lambda x: (store_rank_up.get(x['br'], 0), -(x['ub'] - x['ua'])))
+    pair_hdr = ['Store Code', 'Store', 'Product Category', ua_h, ub_h, 'Unit Change', 'Unit %', ra_h, rb_h, 'Revenue Change']
+    pair_row = lambda x: [x['br'], x['nm'], x['cat'], x['ua'], x['ub'], x['ub'] - x['ua'], _pct(x['ub'], x['ua']), x['ra'], x['rb'], x['rb'] - x['ra']]
+    if show_more:
+        ws2u = wb.create_sheet('Store x Product Growth')
+        sheet(ws2u, pair_hdr, [pair_row(x) for x in ordered_up], num_cols=(4, 5, 6, 8, 9, 10), pct_cols=(7,), delta_cols=(6, 10))
+    if show_less:
+        ws2 = wb.create_sheet('Store x Product Decline')
+        sheet(ws2, pair_hdr, [pair_row(x) for x in ordered], num_cols=(4, 5, 6, 8, 9, 10), pct_cols=(7,), delta_cols=(6, 10))
 
     ws3 = wb.create_sheet('Category Summary')
     sheet(ws3, ['Product Category', ua_h, ub_h, 'Unit Change', 'Unit %', ra_h, rb_h, 'Revenue Change', 'Stores Sold in Base', 'Stores Declined', 'Stores Grown'],
@@ -500,16 +539,28 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
 
     # ---- Chat response ----
     cats_txt = (f"Category compared: {product}" if product else "Categories compared: " + ", ".join(FOCUS_CATS))
-    answer = "**Quarterly insights**\n" + "\n".join(f"- {l}" for l in ins) + f"\n\n{cats_txt}.\n\nFull store x product detail is in the Excel file below ({len(pairs_dec):,} store-product declines)."
-    top_rows = (ordered[:15] if branch_code else pairs_dec[:15])
+    detail_txt = []
+    if show_more: detail_txt.append(f"{len(pairs_inc):,} store-product gains")
+    if show_less: detail_txt.append(f"{len(pairs_dec):,} store-product declines")
+    answer = "**Quarterly insights**\n" + "\n".join(f"- {l}" for l in ins) + f"\n\n{cats_txt}.\n\nFull store x product detail is in the Excel file below ({' / '.join(detail_txt)})."
+    if direction == 'more':
+        top_rows = (ordered_up[:15])
+    elif direction == 'both':
+        top_rows = pairs_inc[:8] + pairs_dec[:8]
+    else:
+        top_rows = (ordered[:15] if branch_code else pairs_dec[:15])
     table = {"headers": ["Store", "Product", ua_h, ub_h, "Change"],
              "rows": [[x['nm'], x['cat'], f"{x['ua']:,}", f"{x['ub']:,}", f"{x['ub'] - x['ua']:+,} ({_fmt_pct(x['ub'], x['ua'])})"] for x in top_rows]}
     cards = [
         {"label": f"Units {lab_a}", "value": f"{tot_ua:,}", "color": "#6b7280"},
         {"label": f"Units {lab_b}", "value": f"{tot_ub:,}", "color": "#2563eb"},
-        {"label": "Stores Declined", "value": f"{len(dec_stores)} / {len(store_list)}", "color": "#ef4444"},
-        {"label": "Store-Product Declines", "value": f"{len(pairs_dec):,}", "color": "#d97706"},
     ]
+    if show_more:
+        cards += [{"label": "Stores Grew", "value": f"{len(inc_stores)} / {len(store_list)}", "color": "#059669"},
+                  {"label": "Store-Product Gains", "value": f"{len(pairs_inc):,}", "color": "#059669"}]
+    if show_less:
+        cards += [{"label": "Stores Declined", "value": f"{len(dec_stores)} / {len(store_list)}", "color": "#ef4444"},
+                  {"label": "Store-Product Declines", "value": f"{len(pairs_dec):,}", "color": "#d97706"}]
     return {
         "answer": answer, "cards": cards, "table": table, "sql": sql.strip(),
         "download": {"url": f"/api/ai/download/{fname}", "filename": fname},
@@ -703,8 +754,11 @@ def answer_with_nlp(question):
         if len(ins_periods) == 2:
             ins_periods.sort(key=lambda p: p[0])
             no_lfl = bool(re.search(r'\b(include|including|with)\s+(all|the)?\s*(new|newly)|all\s+stores\s+including', q_low))
+            _less = bool(re.search(r'\b(less|decreas\w*|declin\w*|drop\w*|fell|fall\w*|lower|down|reduc\w*|dip\w*|lost|loss|worse|negative)\b', q_low))
+            _more = bool(re.search(r'\b(more|increas\w*|grew|grow\w*|gain\w*|higher|rise|rose|improv\w*|better|positive)\b', q_low))
+            direction = 'less' if (_less and not _more) else ('more' if (_more and not _less) else 'both')
             return quarterly_insights(ins_periods[0], ins_periods[1], target_branch_code, target_branch_name,
-                                      product if (product and not item_term) else None, lfl=not no_lfl)
+                                      product if (product and not item_term) else None, lfl=not no_lfl, direction=direction)
 
     # 1a. TWO-DATE COMPARISON - "compare 04-09-2025 with 25-08-2026" -> which products sold more / less
     two_dates = extract_two_dates(question)
