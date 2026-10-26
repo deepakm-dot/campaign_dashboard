@@ -267,6 +267,12 @@ def answer_with_nlp(question):
     start_date, end_date, date_label, is_month = extract_dates(question)
     product, item_term, display_name = extract_product_and_item(question)
     brand = extract_brand(question)
+
+    # Model-family names that customers use instead of product/brand (e.g. "iphone", "galaxy")
+    if re.search(r'\b(iphones?|i\s+phones?)\b', question.lower()):
+        product, item_term, display_name, brand = 'MOBILE', None, 'iPhone', 'APPLE'
+    elif re.search(r'\bgalaxy\b', question.lower()):
+        product, item_term, display_name, brand = 'MOBILE', None, 'Galaxy', 'SAMSUNG'
     target_branch_code, target_branch_name = extract_branch(question)
 
     is_qty_query = any(k in q_low for k in [
