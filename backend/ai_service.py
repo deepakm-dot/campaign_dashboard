@@ -289,6 +289,12 @@ _EXCL_CATS = ("'SCHEME','AC OUTDOOR','D SPARE','SPARE','GDP-SPARE','FIXED ASSETS
               "'STATIONERY ITEMS','GIFT ITEMS','OFFER KIT','FOC','SERVICE','SERVICE CHARGES','OSG WARRANTY',"
               "'CARE PLUS','LG AMC','GDOT CARE','TOTAL SECURITY','MOBILE ANTIVIRUS','CEGI','SMART CHOICE'")
 
+# Only these product categories are considered in quarterly/period comparisons and insights
+FOCUS_CATS = ['CROCKERY', 'MOBILE', 'SMALL APPLIANCES', 'ACCESSORIES', 'FRAGRANCE', 'TV', 'WASHING MACHINES',
+              'REFRIGERATORS', 'AIR CONDITIONER', 'AUDIO', 'LAPTOP', 'HOUSE HOLD', 'HOME APPLIANCES',
+              'PERSONAL CARE', 'HOME THEATRE', 'MICROWAVE OVEN', 'DISH WASHER', 'BT SPEAKERS']
+_FOCUS_SQL = ",".join("'" + c + "'" for c in FOCUS_CATS)
+
 def _pct(new, old):
     return (new - old) / old if old else None
 
@@ -325,7 +331,7 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
         LEFT JOIN item_master im ON im.item_code = s.item_code
         LEFT JOIN branch_master bm ON bm.code = s.branch
         WHERE (({in_a}) OR ({in_b})) AND s.branch NOT IN ('SMC','3GH') AND s.item_code NOT LIKE 'SRV%'
-          AND {prod_expr} != '' AND {prod_expr} NOT IN ({_EXCL_CATS}) {extra}
+          AND {('1=1' if product else prod_expr + ' IN (' + _FOCUS_SQL + ')')} {extra}
         GROUP BY s.branch, grp
     """
     try:
@@ -447,7 +453,7 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
 
     ws0 = wb.active; ws0.title = 'Insights'
     ws0.append([f"Quarterly Insights: {lab_b} vs {lab_a}"]); ws0['A1'].font = Font(bold=True, size=14)
-    ws0.append([f"Scope: {scope_txt}. Units are net of returns. Services, warranties, gifts, stationery, spares and demo items excluded."])
+    ws0.append([f"Scope: {scope_txt}. Units are net of returns. Categories compared: {product if product else ', '.join(FOCUS_CATS)}."])
     ws0.append([f"Like-for-like rule: only stores that had sales in {lab_a} are compared." if lfl else "All stores included."])
     ws0.append([])
     for line in ins:
@@ -493,7 +499,8 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
     wb.save(os.path.join(EXPORT_DIR, fname))
 
     # ---- Chat response ----
-    answer = "**Quarterly insights**\n" + "\n".join(f"- {l}" for l in ins) + f"\n\nFull store x product detail is in the Excel file below ({len(pairs_dec):,} store-product declines)."
+    cats_txt = (f"Category compared: {product}" if product else "Categories compared: " + ", ".join(FOCUS_CATS))
+    answer = "**Quarterly insights**\n" + "\n".join(f"- {l}" for l in ins) + f"\n\n{cats_txt}.\n\nFull store x product detail is in the Excel file below ({len(pairs_dec):,} store-product declines)."
     top_rows = (ordered[:15] if branch_code else pairs_dec[:15])
     table = {"headers": ["Store", "Product", ua_h, ub_h, "Change"],
              "rows": [[x['nm'], x['cat'], f"{x['ua']:,}", f"{x['ub']:,}", f"{x['ub'] - x['ua']:+,} ({_fmt_pct(x['ub'], x['ua'])})"] for x in top_rows]}
@@ -757,6 +764,9 @@ def answer_with_nlp(question):
             extra += f" AND upper(im.brand) = '{brand}'"
             scope_bits.append(brand)
         scope = " / ".join(scope_bits) if scope_bits else ("like-for-like stores" if lfl else "all stores")
+        is_range_cmp = (d_a != d_a_end) or (d_b != d_b_end)
+        use_focus = is_range_cmp and not (item_term or product)
+        cat_filter = (f"{prod_expr_c} IN ({_FOCUS_SQL})" if use_focus else f"{prod_expr_c} != '' AND {prod_expr_c} NOT IN ({excluded_c})")
         cmp_sql = f"""
             SELECT {group_expr} AS grp,
                    sumIf({qty_c}, {in_a}) AS ua,
@@ -768,7 +778,7 @@ def answer_with_nlp(question):
             WHERE (({in_a}) OR ({in_b})){lfl_filter}
               AND s.branch NOT IN ('SMC', '3GH')
               AND s.item_code NOT LIKE 'SRV%'
-              AND {prod_expr_c} != '' AND {prod_expr_c} NOT IN ({excluded_c})
+              AND {cat_filter}
               {extra}
             GROUP BY grp
         """
@@ -793,7 +803,7 @@ def answer_with_nlp(question):
             gainers = sorted([x for x in data if x['du'] > 0], key=lambda x: (-x['du'], -x['dr']))
             losers = sorted([x for x in data if x['du'] < 0], key=lambda x: (x['du'], x['dr']))
             name_u = lambda x: f"**{x['name']}** ({x['ua']:,} \u2192 {x['ub']:,}, {x['du']:+,})"
-            note = f"*(Change = {lab_b} minus {lab_a}; units net of returns; services, warranties, gifts, stationery, spares and demo items excluded.)*{lfl_note}"
+            note = f"*(Change = {lab_b} minus {lab_a}; units net of returns; " + ("only the selected categories are compared.)*" if use_focus else "services, warranties, gifts, stationery, spares and demo items excluded.)*") + f"{lfl_note}"
 
             def row(x, mark):
                 return [f"{mark} {x['name']}", f"{x['ua']:,}", f"{x['ub']:,}", f"{x['du']:+,} ({pct(x['ub'], x['ua'])})", f"{format_inr_exact(x['ra'])} \u2192 {format_inr_exact(x['rb'])}"]
