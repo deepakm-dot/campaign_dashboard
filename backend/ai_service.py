@@ -213,6 +213,27 @@ def extract_brand(text):
             return b.upper()
     return None
 
+def extract_two_dates(text):
+    """Return [(iso_date, label), ...] for every specific full date (with year) found, in the order written."""
+    t = text.lower()
+    found = []  # (position, iso)
+    for m in re.finditer(r'\b(202[0-9])-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])\b', t):
+        found.append((m.start(), f"{m.group(1)}-{m.group(2)}-{m.group(3)}"))
+    for m in re.finditer(r'\b(0?[1-9]|[12][0-9]|3[01])[-/.](0?[1-9]|1[0-2])[-/.](202[0-9])\b', t):
+        found.append((m.start(), f"{m.group(3)}-{m.group(2).zfill(2)}-{m.group(1).zfill(2)}"))
+    mon = r'(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)'
+    for m in re.finditer(r'\b(0?[1-9]|[12][0-9]|3[01])(?:st|nd|rd|th)?\s+' + mon + r'\s+(202[0-9])\b', t):
+        found.append((m.start(), f"{m.group(3)}-{MONTH_MAP.get(m.group(2)[:3], '01')}-{m.group(1).zfill(2)}"))
+    for m in re.finditer(r'\b' + mon + r'\s+(0?[1-9]|[12][0-9]|3[01])(?:st|nd|rd|th)?,?\s+(202[0-9])\b', t):
+        found.append((m.start(), f"{m.group(3)}-{MONTH_MAP.get(m.group(1)[:3], '01')}-{m.group(2).zfill(2)}"))
+    found.sort()
+    out, seen = [], set()
+    for _, iso in found:
+        if iso not in seen:
+            seen.add(iso)
+            out.append(iso)
+    return out
+
 _BRANCH_MAP_CACHE = None
 
 def get_branch_map():
@@ -394,6 +415,92 @@ def answer_with_nlp(question):
                     "suggestions": ["Top 5 campaigns by revenue", "What was the sale on 2026-08-14?", "Which product was most sold on 2026-08-14?"]
                 }
 
+    # 1a. TWO-DATE COMPARISON - "compare 04-09-2025 with 25-08-2026" -> which products sold more / less
+    two_dates = extract_two_dates(question)
+    if len(two_dates) == 2 and re.search(r'\b(compar\w*|vs\.?|versus|against|difference|differ\w*)\b', q_low):
+        d_a, d_b = two_dates
+        lab_a = datetime.strptime(d_a, '%Y-%m-%d').strftime('%d-%m-%Y')
+        lab_b = datetime.strptime(d_b, '%Y-%m-%d').strftime('%d-%m-%Y')
+        excluded_c = ("'SCHEME','AC OUTDOOR','D SPARE','SPARE','GDP-SPARE','FIXED ASSETS','DEMO','DEMO ACCESSORIES',"
+                      "'STATIONERY ITEMS','GIFT ITEMS','OFFER KIT','FOC','SERVICE','SERVICE CHARGES','OSG WARRANTY',"
+                      "'CARE PLUS','LG AMC','GDOT CARE','TOTAL SECURITY','MOBILE ANTIVIRUS','CEGI','SMART CHOICE'")
+        prod_expr_c = ("if(coalesce(im.product,'')='', multiIf(s.item_code LIKE 'MOB%','MOBILE', s.item_code LIKE 'TV%','TV', "
+                       "s.item_code LIKE 'LAP%','LAPTOP', s.item_code LIKE 'AC%','AIR CONDITIONER', "
+                       "s.item_code LIKE 'WM%','WASHING MACHINES', s.item_code LIKE 'REF%','REFRIGERATORS',''), im.product)")
+        qty_c = "if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))"
+        rev_c = "toFloat64(s.sold_price) * toInt64(s.qty)"
+        extra = ""
+        group_expr, group_title = prod_expr_c, "Product Category"
+        scope_bits = []
+        if target_branch_code:
+            extra += f" AND s.branch = '{target_branch_code}'"
+            scope_bits.append(target_branch_name)
+        if item_term:
+            extra += f" AND upper(im.item_name) LIKE '%{item_term}%'"
+            group_expr, group_title = "coalesce(im.brand,'Other')", "Brand"
+            scope_bits.append(display_name)
+        elif product:
+            extra += f" AND {prod_expr_c} = '{product}'"
+            group_expr, group_title = "coalesce(im.brand,'Other')", "Brand"
+            scope_bits.append(display_name)
+        if brand and not (item_term or product):
+            extra += f" AND upper(im.brand) = '{brand}'"
+            scope_bits.append(brand)
+        scope = " / ".join(scope_bits) if scope_bits else "all stores"
+        cmp_sql = f"""
+            SELECT {group_expr} AS grp,
+                   sumIf({qty_c}, toDate(s.date) = '{d_a}') AS ua,
+                   sumIf({qty_c}, toDate(s.date) = '{d_b}') AS ub,
+                   sumIf({rev_c}, toDate(s.date) = '{d_a}') AS ra,
+                   sumIf({rev_c}, toDate(s.date) = '{d_b}') AS rb
+            FROM azure_sales_report s
+            LEFT JOIN item_master im ON im.item_code = s.item_code
+            WHERE toDate(s.date) IN ('{d_a}', '{d_b}')
+              AND s.branch NOT IN ('SMC', '3GH')
+              AND s.item_code NOT LIKE 'SRV%'
+              AND {prod_expr_c} != '' AND {prod_expr_c} NOT IN ({excluded_c})
+              {extra}
+            GROUP BY grp
+        """
+        c_rows = run_sql(cmp_sql)
+        data = []
+        for r in c_rows or []:
+            ua, ub = int(float(r['ua'])), int(float(r['ub']))
+            ra, rb = float(r['ra']), float(r['rb'])
+            if ua == 0 and ub == 0 and ra == 0 and rb == 0:
+                continue
+            data.append({'name': r['grp'], 'ua': ua, 'ub': ub, 'ra': ra, 'rb': rb, 'du': ub - ua, 'dr': rb - ra})
+        if data:
+            tot_ua, tot_ub = sum(x['ua'] for x in data), sum(x['ub'] for x in data)
+            tot_ra, tot_rb = sum(x['ra'] for x in data), sum(x['rb'] for x in data)
+            pct = lambda new, old: (f"{(new - old) / old * 100:+.1f}%" if old else ("new" if new else "-"))
+            gainers = sorted([x for x in data if x['du'] > 0], key=lambda x: (-x['du'], -x['dr']))[:limit]
+            losers = sorted([x for x in data if x['du'] < 0], key=lambda x: (x['du'], x['dr']))[:limit]
+            same = [x for x in data if x['du'] == 0]
+            name_u = lambda x: f"**{x['name']}** ({x['ua']:,} \u2192 {x['ub']:,}, {x['du']:+,})"
+            more_txt = "; ".join(name_u(x) for x in gainers) or "none"
+            less_txt = "; ".join(name_u(x) for x in losers) or "none"
+            ans = (f"Comparing **{lab_a}** with **{lab_b}** ({scope}): total units went from **{tot_ua:,}** to **{tot_ub:,}** "
+                   f"(**{tot_ub - tot_ua:+,}**, {pct(tot_ub, tot_ua)}) and revenue from **{format_inr(tot_ra)}** to **{format_inr(tot_rb)}** "
+                   f"(**{format_inr(tot_rb - tot_ra)}**, {pct(tot_rb, tot_ra)}). "
+                   f"**Sold more on {lab_b}:** {more_txt}. **Sold less on {lab_b}:** {less_txt}. "
+                   f"*(Changes are {lab_b} minus {lab_a}; units net of returns; services, warranties, gifts, stationery, spares and demo items excluded.)*")
+            def row(x, mark):
+                return [f"{mark} {x['name']}", f"{x['ua']:,}", f"{x['ub']:,}", f"{x['du']:+,} ({pct(x['ub'], x['ua'])})", f"{format_inr_exact(x['ra'])} \u2192 {format_inr_exact(x['rb'])}"]
+            rows_t = [row(x, '\u25b2') for x in gainers] + [row(x, '\u25bc') for x in losers]
+            rows_t.append(["TOTAL", f"{tot_ua:,}", f"{tot_ub:,}", f"{tot_ub - tot_ua:+,} ({pct(tot_ub, tot_ua)})", f"{format_inr_exact(tot_ra)} \u2192 {format_inr_exact(tot_rb)}"])
+            cards = [
+                {"label": f"Units {lab_a}", "value": f"{tot_ua:,}", "color": "#6b7280"},
+                {"label": f"Units {lab_b}", "value": f"{tot_ub:,}", "color": "#2563eb"},
+                {"label": "Unit Change", "value": f"{tot_ub - tot_ua:+,} ({pct(tot_ub, tot_ua)})", "color": "#059669" if tot_ub >= tot_ua else "#ef4444"},
+                {"label": "Revenue Change", "value": f"{format_inr(tot_rb - tot_ra)} ({pct(tot_rb, tot_ra)})", "color": "#059669" if tot_rb >= tot_ra else "#ef4444"}
+            ]
+            table = {"headers": [group_title, f"Units {lab_a}", f"Units {lab_b}", "Change", "Revenue"], "rows": rows_t}
+            return {
+                "answer": ans, "sql": cmp_sql.strip(), "cards": cards, "table": table,
+                "suggestions": [f"Which product sold the most on {lab_b}?", f"Compare {lab_a} with {lab_b} for Balussery Future", f"What was the total sale on {d_b}?"]
+            }
+
     # 1b. PRODUCT RANKING - "which product sold the most/least on <date>" (all stores or one store)
     rank_intent = bool(re.search(r'\b(most|least|highest|lowest|top|best|worst|bottom|selling|slowest|fastest)\b', q_low)) \
         and bool(re.search(r'\b(products?|items?|categor(?:y|ies)|models?)\b', q_low))
@@ -403,7 +510,7 @@ def answer_with_nlp(question):
         by_revenue = any(k in q_low for k in ['revenue', 'sales value', 'amount', 'value', 'turnover', 'worth'])
         excluded = ("'SCHEME','AC OUTDOOR','D SPARE','SPARE','GDP-SPARE','FIXED ASSETS','DEMO','DEMO ACCESSORIES',"
                     "'STATIONERY ITEMS','GIFT ITEMS','OFFER KIT','FOC','SERVICE','SERVICE CHARGES','OSG WARRANTY',"
-                    "'CARE PLUS','LG AMC','GDOT CARE','TOTAL SECURITY','MOBILE ANTIVIRUS','CEGI'")
+                    "'CARE PLUS','LG AMC','GDOT CARE','TOTAL SECURITY','MOBILE ANTIVIRUS','CEGI','SMART CHOICE'")
         prod_expr = ("if(coalesce(im.product,'')='', multiIf(s.item_code LIKE 'MOB%','MOBILE', s.item_code LIKE 'TV%','TV', "
                      "s.item_code LIKE 'LAP%','LAPTOP', s.item_code LIKE 'AC%','AIR CONDITIONER', "
                      "s.item_code LIKE 'WM%','WASHING MACHINES', s.item_code LIKE 'REF%','REFRIGERATORS',''), im.product)")
