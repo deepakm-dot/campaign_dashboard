@@ -474,27 +474,63 @@ def answer_with_nlp(question):
             tot_ua, tot_ub = sum(x['ua'] for x in data), sum(x['ub'] for x in data)
             tot_ra, tot_rb = sum(x['ra'] for x in data), sum(x['rb'] for x in data)
             pct = lambda new, old: (f"{(new - old) / old * 100:+.1f}%" if old else ("new" if new else "-"))
-            gainers = sorted([x for x in data if x['du'] > 0], key=lambda x: (-x['du'], -x['dr']))[:limit]
-            losers = sorted([x for x in data if x['du'] < 0], key=lambda x: (x['du'], x['dr']))[:limit]
-            same = [x for x in data if x['du'] == 0]
+            want_less = bool(re.search(r'\b(less|decreas\w*|declin\w*|drop\w*|fell|fall\w*|lower|down|reduc\w*|dip\w*|lost|loss|worse|negative)\b', q_low))
+            want_more = bool(re.search(r'\b(more|increas\w*|grew|grow\w*|gain\w*|higher|up|rise|rose|improv\w*|better|positive)\b', q_low))
+            only_less = want_less and not want_more
+            only_more = want_more and not want_less
+            # For a single direction, list every product in that direction unless a top-N was asked for
+            n_show = limit if (m_lim or not (only_less or only_more)) else 50
+            gainers = sorted([x for x in data if x['du'] > 0], key=lambda x: (-x['du'], -x['dr']))
+            losers = sorted([x for x in data if x['du'] < 0], key=lambda x: (x['du'], x['dr']))
             name_u = lambda x: f"**{x['name']}** ({x['ua']:,} \u2192 {x['ub']:,}, {x['du']:+,})"
-            more_txt = "; ".join(name_u(x) for x in gainers) or "none"
-            less_txt = "; ".join(name_u(x) for x in losers) or "none"
-            ans = (f"Comparing **{lab_a}** with **{lab_b}** ({scope}): total units went from **{tot_ua:,}** to **{tot_ub:,}** "
-                   f"(**{tot_ub - tot_ua:+,}**, {pct(tot_ub, tot_ua)}) and revenue from **{format_inr(tot_ra)}** to **{format_inr(tot_rb)}** "
-                   f"(**{format_inr(tot_rb - tot_ra)}**, {pct(tot_rb, tot_ra)}). "
-                   f"**Sold more on {lab_b}:** {more_txt}. **Sold less on {lab_b}:** {less_txt}. "
-                   f"*(Changes are {lab_b} minus {lab_a}; units net of returns; services, warranties, gifts, stationery, spares and demo items excluded.)*")
+            note = f"*(Change = {lab_b} minus {lab_a}; units net of returns; services, warranties, gifts, stationery, spares and demo items excluded.)*"
+
             def row(x, mark):
                 return [f"{mark} {x['name']}", f"{x['ua']:,}", f"{x['ub']:,}", f"{x['du']:+,} ({pct(x['ub'], x['ua'])})", f"{format_inr_exact(x['ra'])} \u2192 {format_inr_exact(x['rb'])}"]
-            rows_t = [row(x, '\u25b2') for x in gainers] + [row(x, '\u25bc') for x in losers]
-            rows_t.append(["TOTAL", f"{tot_ua:,}", f"{tot_ub:,}", f"{tot_ub - tot_ua:+,} ({pct(tot_ub, tot_ua)})", f"{format_inr_exact(tot_ra)} \u2192 {format_inr_exact(tot_rb)}"])
-            cards = [
-                {"label": f"Units {lab_a}", "value": f"{tot_ua:,}", "color": "#6b7280"},
-                {"label": f"Units {lab_b}", "value": f"{tot_ub:,}", "color": "#2563eb"},
-                {"label": "Unit Change", "value": f"{tot_ub - tot_ua:+,} ({pct(tot_ub, tot_ua)})", "color": "#059669" if tot_ub >= tot_ua else "#ef4444"},
-                {"label": "Revenue Change", "value": f"{format_inr(tot_rb - tot_ra)} ({pct(tot_rb, tot_ra)})", "color": "#059669" if tot_rb >= tot_ra else "#ef4444"}
-            ]
+
+            def subtotal(label, items):
+                ua_, ub_ = sum(x['ua'] for x in items), sum(x['ub'] for x in items)
+                ra_, rb_ = sum(x['ra'] for x in items), sum(x['rb'] for x in items)
+                return [label, f"{ua_:,}", f"{ub_:,}", f"{ub_ - ua_:+,} ({pct(ub_, ua_)})", f"{format_inr_exact(ra_)} \u2192 {format_inr_exact(rb_)}"], ua_, ub_, ra_, rb_
+
+            if only_less or only_more:
+                items_all = losers if only_less else gainers
+                items = items_all[:n_show]
+                word = "less" if only_less else "more"
+                plural = "product categories" if group_title == "Product Category" else "brands"
+                mark, color = ("\u25bc", "#ef4444") if only_less else ("\u25b2", "#059669")
+                if not items_all:
+                    return {"answer": f"Comparing **{lab_a}** with **{lab_b}** ({scope}): no {group_title.lower()} sold {word} on {lab_b} than on {lab_a}. {note}",
+                            "sql": cmp_sql.strip(), "cards": [], "table": None, "suggestions": [f"Compare {lab_a} with {lab_b}"]}
+                tot_row, ua_, ub_, ra_, rb_ = subtotal(f"TOTAL ({len(items_all)} sold {word})", items_all)
+                shown_txt = "; ".join(name_u(x) for x in items)
+                more_note = f" Showing top {len(items)} of {len(items_all)}." if len(items_all) > len(items) else ""
+                ans = (f"**{len(items_all)} {plural} sold {word} on {lab_b} than on {lab_a}** ({scope}): "
+                       f"{shown_txt}.{more_note} Together they went from **{ua_:,}** to **{ub_:,}** units "
+                       f"(**{ub_ - ua_:+,}**) and revenue moved from **{format_inr(ra_)}** to **{format_inr(rb_)}**. {note}")
+                cards = [
+                    {"label": f"{plural.title()} Sold {word.title()}", "value": f"{len(items_all)}", "color": color},
+                    {"label": f"Units {lab_a}", "value": f"{ua_:,}", "color": "#6b7280"},
+                    {"label": f"Units {lab_b}", "value": f"{ub_:,}", "color": "#2563eb"},
+                    {"label": "Unit Change", "value": f"{ub_ - ua_:+,} ({pct(ub_, ua_)})", "color": color},
+                ]
+                rows_t = [row(x, mark) for x in items] + [tot_row]
+            else:
+                items = gainers[:n_show] + losers[:n_show]
+                more_txt = "; ".join(name_u(x) for x in gainers[:n_show]) or "none"
+                less_txt = "; ".join(name_u(x) for x in losers[:n_show]) or "none"
+                ans = (f"Comparing **{lab_a}** with **{lab_b}** ({scope}): total units went from **{tot_ua:,}** to **{tot_ub:,}** "
+                       f"(**{tot_ub - tot_ua:+,}**, {pct(tot_ub, tot_ua)}) and revenue from **{format_inr(tot_ra)}** to **{format_inr(tot_rb)}** "
+                       f"(**{format_inr(tot_rb - tot_ra)}**, {pct(tot_rb, tot_ra)}). "
+                       f"**Sold more on {lab_b}:** {more_txt}. **Sold less on {lab_b}:** {less_txt}. {note}")
+                rows_t = [row(x, '\u25b2') for x in gainers[:n_show]] + [row(x, '\u25bc') for x in losers[:n_show]]
+                rows_t.append(["TOTAL", f"{tot_ua:,}", f"{tot_ub:,}", f"{tot_ub - tot_ua:+,} ({pct(tot_ub, tot_ua)})", f"{format_inr_exact(tot_ra)} \u2192 {format_inr_exact(tot_rb)}"])
+                cards = [
+                    {"label": f"Units {lab_a}", "value": f"{tot_ua:,}", "color": "#6b7280"},
+                    {"label": f"Units {lab_b}", "value": f"{tot_ub:,}", "color": "#2563eb"},
+                    {"label": "Unit Change", "value": f"{tot_ub - tot_ua:+,} ({pct(tot_ub, tot_ua)})", "color": "#059669" if tot_ub >= tot_ua else "#ef4444"},
+                    {"label": "Revenue Change", "value": f"{format_inr(tot_rb - tot_ra)} ({pct(tot_rb, tot_ra)})", "color": "#059669" if tot_rb >= tot_ra else "#ef4444"}
+                ]
             table = {"headers": [group_title, f"Units {lab_a}", f"Units {lab_b}", "Change", "Revenue"], "rows": rows_t}
             return {
                 "answer": ans, "sql": cmp_sql.strip(), "cards": cards, "table": table,
