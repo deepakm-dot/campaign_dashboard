@@ -234,6 +234,55 @@ def extract_two_dates(text):
             out.append(iso)
     return out
 
+def extract_periods(text):
+    """Return [(start_iso, end_iso, label), ...] for quarter codes (JFM/AMJ/JAS/OND), Q1-Q4 <year>, and month spans like 'july august september 2026'."""
+    import calendar
+    t = text.lower()
+    found = []
+    def add(pos, m1, m2, y, label):
+        end = calendar.monthrange(y, m2)[1]
+        found.append((pos, f"{y}-{m1:02d}-01", f"{y}-{m2:02d}-{end:02d}", label))
+    qcodes = {'jfm': (1, 3), 'amj': (4, 6), 'jas': (7, 9), 'ond': (10, 12)}
+    for m in re.finditer(r"\b(jfm|amj|jas|ond)\b\s*(?:'|-)?\s*(20\d\d|\d\d)?\b", t):
+        y = m.group(2)
+        if not y:
+            continue
+        y = int(y) if len(y) == 4 else 2000 + int(y)
+        a, b = qcodes[m.group(1)]
+        add(m.start(), a, b, y, f"{m.group(1).upper()} {y}")
+    for m in re.finditer(r'\bq([1-4])\s*(?:of\s+)?(20\d\d)\b', t):
+        n, y = int(m.group(1)), int(m.group(2))
+        add(m.start(), 3 * n - 2, 3 * n, y, f"Q{n} {y}")
+    mon = r'(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)'
+    for m in re.finditer(r'\b(' + mon + r'(?:\s*(?:,|-|to|and|&)?\s*' + mon + r')*)\s*,?\s*(20\d\d)\b', t):
+        names = re.findall(mon, m.group(1))
+        ms = [int(MONTH_MAP.get(n[:3], '01')) for n in names]
+        y = int(m.group(2))
+        lab = (f"{calendar.month_abbr[ms[0]]} {y}" if len(ms) == 1 else f"{calendar.month_abbr[ms[0]]}-{calendar.month_abbr[ms[-1]]} {y}")
+        add(m.start(), min(ms), max(ms), y, lab)
+    found.sort()
+    out, seen = [], set()
+    for _, s, e, lab in found:
+        if (s, e) not in seen:
+            seen.add((s, e))
+            out.append((s, e, lab))
+    if len(out) == 1:
+        # "JAS 2026 vs previous year" / "... with 2025"
+        s, e, lab = out[0]
+        y0 = int(s[:4])
+        others = [int(y) for y in re.findall(r'\b(20\d\d)\b', t) if int(y) != y0]
+        if others:
+            y1 = others[-1]
+        elif re.search(r'(previous|last|prior)\s+year|same\s+(period|quarter)|yoy|year\s+over\s+year|year-on-year', t):
+            y1 = y0 - 1
+        else:
+            return out
+        s1, e1 = f"{y1}{s[4:]}", f"{y1}{e[4:]}"
+        if e1[5:] == '02-28' and calendar.isleap(y1):
+            e1 = f"{y1}-02-29"
+        out.append((s1, e1, lab.replace(str(y0), str(y1))))
+    return out[:2]
+
 _BRANCH_MAP_CACHE = None
 
 def get_branch_map():
@@ -417,10 +466,36 @@ def answer_with_nlp(question):
 
     # 1a. TWO-DATE COMPARISON - "compare 04-09-2025 with 25-08-2026" -> which products sold more / less
     two_dates = extract_two_dates(question)
-    if len(two_dates) == 2 and re.search(r'\b(compar\w*|vs\.?|versus|against|difference|differ\w*)\b', q_low):
-        d_a, d_b = two_dates
-        lab_a = datetime.strptime(d_a, '%Y-%m-%d').strftime('%d-%m-%Y')
-        lab_b = datetime.strptime(d_b, '%Y-%m-%d').strftime('%d-%m-%Y')
+    cmp_periods = []
+    if len(two_dates) == 2:
+        cmp_periods = [(d, d, datetime.strptime(d, '%Y-%m-%d').strftime('%d-%m-%Y')) for d in two_dates]
+    elif len(two_dates) == 0:
+        cmp_periods = extract_periods(question)
+        if len(cmp_periods) == 2:
+            cmp_periods.sort(key=lambda p: p[0])  # base = earlier period, current = later
+    if len(cmp_periods) == 2 and re.search(r'\b(compar\w*|vs\.?|versus|against|difference|differ\w*|previous year|last year|yoy)\b', q_low):
+        (d_a, d_a_end, lab_a), (d_b, d_b_end, lab_b) = cmp_periods
+        lfl = bool(re.search(r'like[\s-]*for[\s-]*like|\blfl\b|same[\s-]+stores?|existing\s+stores?|new(ly)?\s+(launched\s+|opened\s+)?stores?|exclud\w*\s+(the\s+)?(new|newly)', q_low))
+        in_a = f"toDate(s.date) BETWEEN '{d_a}' AND '{d_a_end}'"
+        in_b = f"toDate(s.date) BETWEEN '{d_b}' AND '{d_b_end}'"
+        lfl_filter, lfl_note = "", ""
+        if lfl:
+            lfl_filter = (f" AND s.branch IN (SELECT DISTINCT branch FROM azure_sales_report WHERE {in_a.replace('s.date','date')})")
+            try:
+                nrows = run_sql(f"""
+                    SELECT s.branch AS br, coalesce(any(bm.branch_name), s.branch) AS nm,
+                           sum(toFloat64(s.sold_price) * toInt64(s.qty)) AS rev
+                    FROM azure_sales_report s LEFT JOIN branch_master bm ON bm.code = s.branch
+                    WHERE {in_b} AND s.branch NOT IN ('SMC','3GH')
+                      AND s.branch NOT IN (SELECT DISTINCT branch FROM azure_sales_report WHERE {in_a.replace('s.date','date')})
+                    GROUP BY s.branch ORDER BY rev DESC
+                """) or []
+            except Exception:
+                nrows = []
+            names_x = ", ".join(str(r['nm']) for r in nrows[:10]) + (" ..." if len(nrows) > 10 else "")
+            lfl_note = (f" Like-for-like: only stores that had sales in {lab_a} are compared; "
+                        f"**{len(nrows)} newly launched store(s)** with no sales in {lab_a} were excluded"
+                        f"{' (' + names_x + ')' if nrows else ''}.")
         excluded_c = ("'SCHEME','AC OUTDOOR','D SPARE','SPARE','GDP-SPARE','FIXED ASSETS','DEMO','DEMO ACCESSORIES',"
                       "'STATIONERY ITEMS','GIFT ITEMS','OFFER KIT','FOC','SERVICE','SERVICE CHARGES','OSG WARRANTY',"
                       "'CARE PLUS','LG AMC','GDOT CARE','TOTAL SECURITY','MOBILE ANTIVIRUS','CEGI','SMART CHOICE'")
@@ -449,13 +524,13 @@ def answer_with_nlp(question):
         scope = " / ".join(scope_bits) if scope_bits else "all stores"
         cmp_sql = f"""
             SELECT {group_expr} AS grp,
-                   sumIf({qty_c}, toDate(s.date) = '{d_a}') AS ua,
-                   sumIf({qty_c}, toDate(s.date) = '{d_b}') AS ub,
-                   sumIf({rev_c}, toDate(s.date) = '{d_a}') AS ra,
-                   sumIf({rev_c}, toDate(s.date) = '{d_b}') AS rb
+                   sumIf({qty_c}, {in_a}) AS ua,
+                   sumIf({qty_c}, {in_b}) AS ub,
+                   sumIf({rev_c}, {in_a}) AS ra,
+                   sumIf({rev_c}, {in_b}) AS rb
             FROM azure_sales_report s
             LEFT JOIN item_master im ON im.item_code = s.item_code
-            WHERE toDate(s.date) IN ('{d_a}', '{d_b}')
+            WHERE (({in_a}) OR ({in_b})){lfl_filter}
               AND s.branch NOT IN ('SMC', '3GH')
               AND s.item_code NOT LIKE 'SRV%'
               AND {prod_expr_c} != '' AND {prod_expr_c} NOT IN ({excluded_c})
@@ -483,7 +558,7 @@ def answer_with_nlp(question):
             gainers = sorted([x for x in data if x['du'] > 0], key=lambda x: (-x['du'], -x['dr']))
             losers = sorted([x for x in data if x['du'] < 0], key=lambda x: (x['du'], x['dr']))
             name_u = lambda x: f"**{x['name']}** ({x['ua']:,} \u2192 {x['ub']:,}, {x['du']:+,})"
-            note = f"*(Change = {lab_b} minus {lab_a}; units net of returns; services, warranties, gifts, stationery, spares and demo items excluded.)*"
+            note = f"*(Change = {lab_b} minus {lab_a}; units net of returns; services, warranties, gifts, stationery, spares and demo items excluded.)*{lfl_note}"
 
             def row(x, mark):
                 return [f"{mark} {x['name']}", f"{x['ua']:,}", f"{x['ub']:,}", f"{x['du']:+,} ({pct(x['ub'], x['ua'])})", f"{format_inr_exact(x['ra'])} \u2192 {format_inr_exact(x['rb'])}"]
