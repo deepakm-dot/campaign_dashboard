@@ -521,7 +521,7 @@ def answer_with_nlp(question):
         if brand and not (item_term or product):
             extra += f" AND upper(im.brand) = '{brand}'"
             scope_bits.append(brand)
-        scope = " / ".join(scope_bits) if scope_bits else "all stores"
+        scope = " / ".join(scope_bits) if scope_bits else ("like-for-like stores" if lfl else "all stores")
         cmp_sql = f"""
             SELECT {group_expr} AS grp,
                    sumIf({qty_c}, {in_a}) AS ua,
