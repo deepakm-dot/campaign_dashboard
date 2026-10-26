@@ -294,6 +294,8 @@ FOCUS_CATS = ['CROCKERY', 'MOBILE', 'SMALL APPLIANCES', 'ACCESSORIES', 'FRAGRANC
               'REFRIGERATORS', 'AIR CONDITIONER', 'AUDIO', 'LAPTOP', 'HOUSE HOLD', 'HOME APPLIANCES',
               'PERSONAL CARE', 'HOME THEATRE', 'MICROWAVE OVEN', 'DISH WASHER', 'BT SPEAKERS']
 _FOCUS_SQL = ",".join("'" + c + "'" for c in FOCUS_CATS)
+# Priority products highlighted first in quarterly comparisons/insights
+KEY_CATS = ['MOBILE', 'TV', 'REFRIGERATORS', 'WASHING MACHINES', 'LAPTOP', 'AIR CONDITIONER']
 
 def _pct(new, old):
     return (new - old) / old if old else None
@@ -393,6 +395,22 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
     ins = []
     scope_txt = (branch_name or 'all stores') + (f" / {product}" if product else "") + (" (like-for-like)" if lfl else "")
     ins.append(f"{lab_b} vs {lab_a} ({scope_txt}): units {tot_ua:,} -> {tot_ub:,} ({_fmt_pct(tot_ub, tot_ua)}), revenue Rs {tot_ra:,.0f} -> Rs {tot_rb:,.0f} ({_fmt_pct(tot_rb, tot_ra)}).")
+    if not product:
+        for k in KEY_CATS:
+            c = cats.get(k)
+            if not c:
+                continue
+            line = (f"\u2605 {k}: units {c['ua']:,} -> {c['ub']:,} ({c['ub'] - c['ua']:+,}, {_fmt_pct(c['ub'], c['ua'])}), "
+                    f"revenue Rs {c['ra']:,.0f} -> Rs {c['rb']:,.0f} ({_fmt_pct(c['rb'], c['ra'])}); "
+                    f"grew in {c['sinc']}, fell in {c['sdec']} of {c['sany']} stores.")
+            if not branch_code:
+                if show_less:
+                    dn = sorted([x for x in rows if x['cat'] == k and x['ub'] < x['ua']], key=lambda x: x['ub'] - x['ua'])[:3]
+                    if dn: line += " Biggest drops: " + ", ".join(f"{x['nm']} ({x['ua']:,}->{x['ub']:,})" for x in dn) + "."
+                if show_more:
+                    up = sorted([x for x in rows if x['cat'] == k and x['ub'] > x['ua']], key=lambda x: -(x['ub'] - x['ua']))[:3]
+                    if up: line += " Biggest gains: " + ", ".join(f"{x['nm']} ({x['ua']:,}->{x['ub']:,})" for x in up) + "."
+            ins.append(line)
     if show_more and not product:
         up_c = sorted([c for c in cat_list if c['ub'] > c['ua']], key=lambda c: -(c['ub'] - c['ua']))
         ins.append("Products that sold MORE (all selected categories, by unit gain): " + "; ".join(f"{c['cat']} {c['ua']:,}->{c['ub']:,} ({c['ub'] - c['ua']:+,}, {_fmt_pct(c['ub'], c['ua'])})" for c in up_c) + ".")
@@ -460,9 +478,10 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
     from openpyxl.utils import get_column_letter
     wb = Workbook()
     hdr_fill = PatternFill('solid', fgColor='1F2A56')
+    key_fill = PatternFill('solid', fgColor='FFF2CC')
     red, green = Font(color='C00000', bold=True), Font(color='2E7D32', bold=True)
 
-    def sheet(ws, headers, data, num_cols=(), pct_cols=(), delta_cols=()):
+    def sheet(ws, headers, data, num_cols=(), pct_cols=(), delta_cols=(), key_col=None):
         ws.append(headers)
         for c in ws[1]:
             c.font = Font(bold=True, color='FFFFFF'); c.fill = hdr_fill
@@ -478,6 +497,9 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
                 v = ws.cell(i, ci).value
                 if isinstance(v, (int, float)) and v != 0:
                     ws.cell(i, ci).font = red if v < 0 else green
+            if key_col and ws.cell(i, key_col).value in KEY_CATS:
+                for cc in range(1, len(headers) + 1):
+                    ws.cell(i, cc).fill = key_fill
         for ci, h in enumerate(headers, 1):
             width = max([len(str(h))] + [len(str(ws.cell(i, ci).value or '')) for i in range(2, min(ws.max_row, 200) + 1)])
             ws.column_dimensions[get_column_letter(ci)].width = min(max(width + 2, 11), 48)
@@ -510,21 +532,35 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
     pair_row = lambda x: [x['br'], x['nm'], x['cat'], x['ua'], x['ub'], x['ub'] - x['ua'], _pct(x['ub'], x['ua']), x['ra'], x['rb'], x['rb'] - x['ra']]
     if show_more:
         ws2u = wb.create_sheet('Store x Product Growth')
-        sheet(ws2u, pair_hdr, [pair_row(x) for x in ordered_up], num_cols=(4, 5, 6, 8, 9, 10), pct_cols=(7,), delta_cols=(6, 10))
+        sheet(ws2u, pair_hdr, [pair_row(x) for x in ordered_up], num_cols=(4, 5, 6, 8, 9, 10), pct_cols=(7,), delta_cols=(6, 10), key_col=3)
     if show_less:
         ws2 = wb.create_sheet('Store x Product Decline')
-        sheet(ws2, pair_hdr, [pair_row(x) for x in ordered], num_cols=(4, 5, 6, 8, 9, 10), pct_cols=(7,), delta_cols=(6, 10))
+        sheet(ws2, pair_hdr, [pair_row(x) for x in ordered], num_cols=(4, 5, 6, 8, 9, 10), pct_cols=(7,), delta_cols=(6, 10), key_col=3)
 
     ws3 = wb.create_sheet('Category Summary')
     sheet(ws3, ['Product Category', ua_h, ub_h, 'Unit Change', 'Unit %', ra_h, rb_h, 'Revenue Change', 'Stores Sold in Base', 'Stores Declined', 'Stores Grown'],
           [[c['cat'], c['ua'], c['ub'], c['ub'] - c['ua'], _pct(c['ub'], c['ua']), c['ra'], c['rb'], c['rb'] - c['ra'], c['sa'], c['sdec'], c['sinc']] for c in cat_list],
-          num_cols=(2, 3, 4, 6, 7, 8), pct_cols=(5,), delta_cols=(4, 8))
+          num_cols=(2, 3, 4, 6, 7, 8), pct_cols=(5,), delta_cols=(4, 8), key_col=1)
+
+    # Key products: category summary + store-level detail, placed right after the Insights sheet
+    key_rows_cat = [c for k in KEY_CATS for c in [cats.get(k)] if c]
+    if key_rows_cat and not product:
+        wsk = wb.create_sheet('Key Products', 1)
+        sheet(wsk, ['Key Product', ua_h, ub_h, 'Unit Change', 'Unit %', ra_h, rb_h, 'Revenue Change', 'Revenue %', 'Stores Grew', 'Stores Declined', 'Stores Sold (either period)'],
+              [[c['cat'], c['ua'], c['ub'], c['ub'] - c['ua'], _pct(c['ub'], c['ua']), c['ra'], c['rb'], c['rb'] - c['ra'], _pct(c['rb'], c['ra']), c['sinc'], c['sdec'], c['sany']] for c in key_rows_cat],
+              num_cols=(2, 3, 4, 6, 7, 8), pct_cols=(5, 9), delta_cols=(4, 8))
+        wsks = wb.create_sheet('Key Products by Store', 2)
+        key_pairs = sorted([x for x in rows if x['cat'] in KEY_CATS],
+                           key=lambda x: (KEY_CATS.index(x['cat']), x['ub'] - x['ua']))
+        sheet(wsks, ['Key Product', 'Store Code', 'Store', ua_h, ub_h, 'Unit Change', 'Unit %', ra_h, rb_h, 'Revenue Change'],
+              [[x['cat'], x['br'], x['nm'], x['ua'], x['ub'], x['ub'] - x['ua'], _pct(x['ub'], x['ua']), x['ra'], x['rb'], x['rb'] - x['ra']] for x in key_pairs],
+              num_cols=(4, 5, 6, 8, 9, 10), pct_cols=(7,), delta_cols=(6, 10))
 
     ws4 = wb.create_sheet('All Store x Product')
     full = sorted(rows, key=lambda x: (store_rank.get(x['br'], 0), x['ub'] - x['ua']))
     sheet(ws4, ['Store Code', 'Store', 'Product Category', ua_h, ub_h, 'Unit Change', 'Unit %', ra_h, rb_h, 'Revenue Change'],
           [[x['br'], x['nm'], x['cat'], x['ua'], x['ub'], x['ub'] - x['ua'], _pct(x['ub'], x['ua']), x['ra'], x['rb'], x['rb'] - x['ra']] for x in full],
-          num_cols=(4, 5, 6, 8, 9, 10), pct_cols=(7,), delta_cols=(6, 10))
+          num_cols=(4, 5, 6, 8, 9, 10), pct_cols=(7,), delta_cols=(6, 10), key_col=3)
 
     if new_stores:
         ws5 = wb.create_sheet('Excluded New Stores')
@@ -551,6 +587,11 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
         top_rows = (ordered[:15] if branch_code else pairs_dec[:15])
     table = {"headers": ["Store", "Product", ua_h, ub_h, "Change"],
              "rows": [[x['nm'], x['cat'], f"{x['ua']:,}", f"{x['ub']:,}", f"{x['ub'] - x['ua']:+,} ({_fmt_pct(x['ub'], x['ua'])})"] for x in top_rows]}
+    key_rows_tbl = [cats[k] for k in KEY_CATS if k in cats]
+    if key_rows_tbl and not product:
+        table = {"headers": ["\u2605 Key Product", ua_h, ub_h, "Unit Change", "Revenue Change", "Stores Grew / Fell"],
+                 "rows": [[c['cat'], f"{c['ua']:,}", f"{c['ub']:,}", f"{c['ub'] - c['ua']:+,} ({_fmt_pct(c['ub'], c['ua'])})",
+                           f"{_fmt_pct(c['rb'], c['ra'])}", f"{c['sinc']} / {c['sdec']}"] for c in key_rows_tbl]}
     cards = [
         {"label": f"Units {lab_a}", "value": f"{tot_ua:,}", "color": "#6b7280"},
         {"label": f"Units {lab_b}", "value": f"{tot_ub:,}", "color": "#2563eb"},
@@ -905,6 +946,15 @@ def answer_with_nlp(question):
                     {"label": "Unit Change", "value": f"{tot_ub - tot_ua:+,} ({pct(tot_ub, tot_ua)})", "color": "#059669" if tot_ub >= tot_ua else "#ef4444"},
                     {"label": "Revenue Change", "value": f"{format_inr(tot_rb - tot_ra)} ({pct(tot_rb, tot_ra)})", "color": "#059669" if tot_rb >= tot_ra else "#ef4444"}
                 ]
+            if use_focus:
+                key_d = [x for k in KEY_CATS for x in data if x['name'] == k and not (only_less and x['du'] >= 0) and not (only_more and x['du'] <= 0)]
+                if key_d:
+                    ans = ("**\u2605 Key products:** " + "; ".join(f"**{x['name']}** {x['ua']:,} \u2192 {x['ub']:,} ({x['du']:+,}, {pct(x['ub'], x['ua'])})" for x in key_d) + "\n\n") + ans
+                    _nm = lambda r: r[0].split(' ', 1)[1] if r[0][:1] in ('\u25b2', '\u25bc') and ' ' in r[0] else r[0]
+                    tot_rows = [r for r in rows_t if r[0].startswith('TOTAL')]
+                    body = [r for r in rows_t if not r[0].startswith('TOTAL')]
+                    body.sort(key=lambda r: 0 if _nm(r) in KEY_CATS else 1)
+                    rows_t = [(['\u2605 ' + r[0]] + r[1:]) if _nm(r) in KEY_CATS else r for r in body] + tot_rows
             table = {"headers": [group_title, f"Units {lab_a}", f"Units {lab_b}", "Change", "Revenue"], "rows": rows_t}
             return {
                 "answer": ans, "sql": cmp_sql.strip(), "cards": cards, "table": table,
