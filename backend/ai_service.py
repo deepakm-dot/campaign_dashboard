@@ -394,6 +394,102 @@ def answer_with_nlp(question):
                     "suggestions": ["Top 5 campaigns by revenue", "What was the sale on 2026-08-14?", "Which product was most sold on 2026-08-14?"]
                 }
 
+    # 1b. PRODUCT RANKING - "which product sold the most/least on <date>" (all stores or one store)
+    rank_intent = bool(re.search(r'\b(most|least|highest|lowest|top|best|worst|bottom|selling|slowest|fastest)\b', q_low)) \
+        and bool(re.search(r'\b(products?|items?|categor(?:y|ies)|models?)\b', q_low))
+    if (rank_intent or any(k in q_low for k in ['product breakdown', 'sold the most', 'sold most', 'most sold', 'best selling', 'top selling'])) \
+            and not (product or item_term) \
+            and (bool(target_branch_code) or not any(k in q_low for k in ['store', 'stores', 'branches', 'branch'])):
+        by_revenue = any(k in q_low for k in ['revenue', 'sales value', 'amount', 'value', 'turnover', 'worth'])
+        excluded = ("'SCHEME','AC OUTDOOR','D SPARE','SPARE','GDP-SPARE','FIXED ASSETS','DEMO','DEMO ACCESSORIES',"
+                    "'STATIONERY ITEMS','GIFT ITEMS','OFFER KIT','FOC','SERVICE','SERVICE CHARGES','OSG WARRANTY',"
+                    "'CARE PLUS','LG AMC','GDOT CARE','TOTAL SECURITY','MOBILE ANTIVIRUS','CEGI'")
+        prod_expr = ("if(coalesce(im.product,'')='', multiIf(s.item_code LIKE 'MOB%','MOBILE', s.item_code LIKE 'TV%','TV', "
+                     "s.item_code LIKE 'LAP%','LAPTOP', s.item_code LIKE 'AC%','AIR CONDITIONER', "
+                     "s.item_code LIKE 'WM%','WASHING MACHINES', s.item_code LIKE 'REF%','REFRIGERATORS',''), im.product)")
+        net_units = "sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty)))"
+        branch_cond = f"AND s.branch = '{target_branch_code}'" if target_branch_code else ""
+        scope = target_branch_name if target_branch_code else "all stores"
+        base_where = (f"WHERE {date_filter} AND s.branch NOT IN ('SMC', '3GH') {branch_cond} "
+                      f"AND s.item_code NOT LIKE 'SRV%' AND {prod_expr} != '' AND {prod_expr} NOT IN ({excluded})")
+        if by_revenue:
+            order = "revenue ASC, units ASC" if is_least else "revenue DESC, units DESC"
+        else:
+            order = "units ASC, revenue ASC" if is_least else "units DESC, revenue DESC"
+        having = "HAVING units > 0" if is_least else ""
+        sql = f"""
+            SELECT {prod_expr} AS product,
+                   {net_units} AS units,
+                   round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) AS revenue
+            FROM azure_sales_report s
+            LEFT JOIN item_master im ON im.item_code = s.item_code
+            {base_where}
+            GROUP BY product
+            {having}
+            ORDER BY {order}
+            LIMIT {limit}
+        """
+        rows = run_sql(sql)
+        if rows:
+            for r in rows:
+                r['units'] = int(float(r['units'])); r['revenue'] = float(r['revenue'])
+            top = rows[0]
+            # Leader by the *other* metric, so both "sold most" and "earned most" are answered exactly
+            alt_sql = f"""
+                SELECT {prod_expr} AS product, {net_units} AS units,
+                       round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) AS revenue
+                FROM azure_sales_report s LEFT JOIN item_master im ON im.item_code = s.item_code
+                {base_where}
+                GROUP BY product {having}
+                ORDER BY {'units' if by_revenue else 'revenue'} {'ASC' if is_least else 'DESC'} LIMIT 1
+            """
+            alt = run_sql(alt_sql)
+            alt_txt = ""
+            alt_row = alt[0] if alt else None
+            if alt_row and alt_row['product'] != top['product']:
+                if by_revenue:
+                    alt_txt = f" By units, **{alt_row['product']}** was {'lowest' if is_least else 'highest'} with **{format_units(int(float(alt_row['units'])))} units**."
+                else:
+                    alt_txt = f" By revenue, **{alt_row['product']}** was {'lowest' if is_least else 'highest'} with **{format_inr(alt_row['revenue'])}** ({format_inr_exact(alt_row['revenue'])})."
+
+            # Top models (individual items) for the same scope
+            top_prod_sql = str(top['product']).replace("'", "''")
+            m_sql = f"""
+                SELECT coalesce(im.item_name, s.item_code) AS model, {net_units} AS units,
+                       round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) AS revenue
+                FROM azure_sales_report s LEFT JOIN item_master im ON im.item_code = s.item_code
+                {base_where} AND {prod_expr} = '{top_prod_sql}'
+                GROUP BY model HAVING units > 0
+                ORDER BY {'revenue' if by_revenue else 'units'} {'ASC' if is_least else 'DESC'} LIMIT 3
+            """
+            m_rows = run_sql(m_sql)
+            model_txt = ""
+            if m_rows:
+                model_txt = f" Top {top['product']} models: " + "; ".join(f"**{m['model']}** ({int(float(m['units']))} unit{'s' if int(float(m['units'])) != 1 else ''})" for m in m_rows) + "."
+
+            metric_word = "revenue" if by_revenue else "units sold"
+            direction = "least" if is_least else "most"
+            ans = (f"On **{date_label}** at **{scope}**, the product category that sold the {direction} by {metric_word} was "
+                   f"**{top['product']}** with **{format_units(top['units'])} units** and **{format_inr(top['revenue'])}** "
+                   f"({format_inr_exact(top['revenue'])}).{alt_txt}{model_txt} "
+                   f"*(Units are net of returns; services, warranties, gifts, stationery, spares and demo items are excluded.)*")
+            cards = [
+                {"label": f"{'Lowest' if is_least else 'Top'} Category", "value": top['product'], "color": "#ef4444" if is_least else "#4f46e5"},
+                {"label": "Units Sold", "value": format_units(top['units']), "color": "#2563eb"},
+                {"label": "Revenue", "value": format_inr(top['revenue']), "color": "#059669"},
+                {"label": "Scope", "value": scope, "color": "#7c3aed"}
+            ]
+            table = {
+                "headers": ["Product Category", "Units Sold", "Revenue"],
+                "rows": [[r['product'], format_units(r['units']), format_inr_exact(r['revenue'])] for r in rows]
+            }
+            return {
+                "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
+                "suggestions": [f"How much {top['product'].title()} was sold on {start_date}?",
+                                f"Which product sold the most by revenue on {start_date}?",
+                                f"What was the total sale on {start_date}?"]
+            }
+
     # 2. SPECIFIC PRODUCT / ITEM SALES (e.g. "how many ceiling fan sold", "tv sales", "samsung mobile sold", etc.)
     if product or item_term:
         if item_term == 'PEDESTAL FAN':
