@@ -3049,7 +3049,7 @@ async function submitAiChat() {
           <div class="ai-msg-bubble">
             <div class="ai-msg-text">${formatAiMarkdown(res.answer)}</div>
             ${cardsHtml}
-            ${tableHtml}
+            ${tableHtml}${res.download && res.download.url ? `<a href="${res.download.url}" download="${res.download.filename}" style="display:inline-flex;align-items:center;gap:8px;margin-top:12px;padding:10px 16px;background:linear-gradient(135deg,#059669,#10b981);color:#fff;border-radius:10px;font-weight:700;font-size:13px;text-decoration:none;box-shadow:0 4px 12px rgba(5,150,105,.3);">&#128202; Download Excel report</a>` : ''}
             ${sqlHtml}
             ${suggHtml}
           </div>

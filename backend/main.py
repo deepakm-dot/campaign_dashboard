@@ -1694,6 +1694,14 @@ def api_ai_query():
         response.status = 500
         return {'error': str(e)}
 
+@app.route('/api/ai/download/<fname>')
+def api_ai_download(fname):
+    import ai_service
+    if not __import__('re').match(r'^insights_[A-Za-z0-9_]+\.xlsx$', fname):
+        response.status = 400
+        return {'error': 'Invalid file'}
+    return static_file(fname, root=ai_service.EXPORT_DIR, download=fname)
+
 @app.route('/<filepath:path>')
 def serve_static(filepath):
     frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'frontend')
