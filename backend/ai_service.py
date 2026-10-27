@@ -701,9 +701,9 @@ def answer_with_nlp(question):
     has_date = bool(start_date)
     if not start_date:
         latest = get_latest_sales_date()
-        today_s = datetime.now().strftime('%Y-%m-%d')
+        today_s = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%Y-%m-%d')
         if 'yesterday' in q_low:
-            d = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+            d = (datetime.utcnow() + timedelta(hours=5, minutes=30) - timedelta(days=1)).strftime('%Y-%m-%d')
             d = min(d, latest)
             date_label = datetime.strptime(d, '%Y-%m-%d').strftime('%d %b %Y')
         elif 'today' in q_low:
