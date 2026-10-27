@@ -652,6 +652,21 @@ def extract_branch(text):
             return b_map[k]
     return None, None
 
+_LATEST_DATE_CACHE = {'v': None, 't': 0}
+
+def get_latest_sales_date():
+    """Latest date present in azure_sales_report (cached 60s); falls back to today's date."""
+    import time
+    if _LATEST_DATE_CACHE['v'] and time.time() - _LATEST_DATE_CACHE['t'] < 60:
+        return _LATEST_DATE_CACHE['v']
+    try:
+        rows = run_sql("SELECT toString(max(toDate(date))) AS d FROM azure_sales_report")
+        v = rows[0]['d'] if rows and rows[0].get('d') else datetime.now().strftime('%Y-%m-%d')
+    except Exception:
+        v = datetime.now().strftime('%Y-%m-%d')
+    _LATEST_DATE_CACHE['v'], _LATEST_DATE_CACHE['t'] = v, time.time()
+    return v
+
 def answer_with_nlp(question):
     """
     Deterministic semantic NLP engine that understands sales, products,
@@ -685,14 +700,19 @@ def answer_with_nlp(question):
     # If question asks about "a specific date" without giving one, pick 2026-08-14 as the benchmark
     has_date = bool(start_date)
     if not start_date:
-        if 'today' in q_low or 'yesterday' in q_low or 'recent' in q_low:
-            start_date = '2026-10-22'
-            end_date = '2026-10-22'
-            date_label = '22 Oct 2026'
+        latest = get_latest_sales_date()
+        today_s = datetime.now().strftime('%Y-%m-%d')
+        if 'yesterday' in q_low:
+            d = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+            d = min(d, latest)
+            date_label = datetime.strptime(d, '%Y-%m-%d').strftime('%d %b %Y')
+        elif 'today' in q_low:
+            d = min(today_s, latest)
+            date_label = datetime.strptime(d, '%Y-%m-%d').strftime('%d %b %Y') + ('' if d == today_s else ' (latest available; no sales synced for today yet)')
         else:
-            start_date = '2026-08-14'
-            end_date = '2026-08-14'
-            date_label = '14 Aug 2026 (Benchmark)'
+            d = latest
+            date_label = datetime.strptime(d, '%Y-%m-%d').strftime('%d %b %Y') + ' (latest available date - no date was specified)'
+        start_date = end_date = d
 
     date_filter = f"toDate(s.date) = '{start_date}'" if start_date == end_date else f"toDate(s.date) >= '{start_date}' AND toDate(s.date) <= '{end_date}'"
 
