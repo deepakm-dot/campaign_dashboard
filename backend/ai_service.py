@@ -1024,6 +1024,13 @@ def answer_with_nlp(question):
     # 1b. PRODUCT RANKING - "which product sold the most/least on <date>" (all stores or one store)
     rank_intent = bool(re.search(r'\b(most|least|highest|lowest|top|best|worst|bottom|selling|slowest|fastest)\b', q_low)) \
         and bool(re.search(r'\b(products?|items?|categor(?:y|ies)|models?)\b', q_low))
+    # "which product sold more / less (in terms of units)" on a date / period / store
+    _which_more = bool(re.search(r'\bwhich\b.*\b(products?|items?|categor(?:y|ies)|models?)\b.*\b(sold|sell|sells|selling)\s+(the\s+)?(more|less|lesser|fewer)\b', q_low)) \
+        or bool(re.search(r'\bwhich\b.*\b(products?|items?|categor(?:y|ies)|models?)\b.*\b(more|less)\s+(in\s+terms\s+of|by)\b', q_low))
+    if _which_more:
+        rank_intent = True
+        if re.search(r'\b(less|lesser|fewer)\b', q_low):
+            is_least = True
     if (rank_intent or any(k in q_low for k in ['product breakdown', 'sold the most', 'sold most', 'most sold', 'best selling', 'top selling'])) \
             and not (product or item_term) \
             and (bool(target_branch_code) or not any(k in q_low for k in ['store', 'stores', 'branches', 'branch'])):
