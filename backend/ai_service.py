@@ -815,7 +815,7 @@ def answer_with_nlp(question):
         if len(ins_periods) == 2:
             ins_periods.sort(key=lambda p: p[0])
             no_lfl = bool(re.search(r'\b(include|including|with)\s+(all|the)?\s*(new|newly)|all\s+stores\s+including', q_low))
-            _less = bool(re.search(r'\b(less|decreas\w*|declin\w*|drop\w*|fell|fall\w*|lower|down|reduc\w*|dip\w*|lost|loss|worse|negative)\b', q_low))
+            _less = bool(re.search(r'\b(less|least|lowest|bottom|slowest|low|decreas\w*|declin\w*|drop\w*|fell|fall\w*|lower|down|reduc\w*|dip\w*|lost|loss|worse|negative|under[\s-]?perform\w*|poor\w*|weak\w*|worst)\b', q_low))
             _more = bool(re.search(r'\b(more|increas\w*|grew|grow\w*|gain\w*|higher|rise|rose|improv\w*|better|positive)\b', q_low))
             direction = 'less' if (_less and not _more) else ('more' if (_more and not _less) else 'both')
             return quarterly_insights(ins_periods[0], ins_periods[1], target_branch_code, target_branch_name,
@@ -926,7 +926,7 @@ def answer_with_nlp(question):
             tot_ua, tot_ub = sum(x['ua'] for x in data), sum(x['ub'] for x in data)
             tot_ra, tot_rb = sum(x['ra'] for x in data), sum(x['rb'] for x in data)
             pct = lambda new, old: (f"{(new - old) / old * 100:+.1f}%" if old else ("new" if new else "-"))
-            want_less = bool(re.search(r'\b(less|decreas\w*|declin\w*|drop\w*|fell|fall\w*|lower|down|reduc\w*|dip\w*|lost|loss|worse|negative|under[\s-]?perform\w*|poor\w*|weak\w*|worst)\b', q_low))
+            want_less = bool(re.search(r'\b(less|least|lowest|bottom|slowest|low|decreas\w*|declin\w*|drop\w*|fell|fall\w*|lower|down|reduc\w*|dip\w*|lost|loss|worse|negative|under[\s-]?perform\w*|poor\w*|weak\w*|worst)\b', q_low))
             want_more = bool(re.search(r'\b(more|increas\w*|grew|grow\w*|gain\w*|higher|up|rise|rose|improv\w*|better|positive)\b', q_low))
             only_less = want_less and not want_more
             only_more = want_more and not want_less
