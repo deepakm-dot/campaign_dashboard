@@ -682,8 +682,19 @@ def answer_with_nlp(question):
         _single = extract_periods(question)
         if len(_single) == 1:
             start_date, end_date, date_label, is_month = _single[0][0], _single[0][1], _single[0][2], False
-    product, item_term, display_name = extract_product_and_item(question)
-    brand = extract_brand(question)
+    # Resolve the store first and remove its name from the text used for product/brand detection,
+    # otherwise store names like "IRON BRIDGE FUTURE" are mistaken for products (iron).
+    target_branch_code, target_branch_name = extract_branch(question)
+    _q_prod = question
+    if target_branch_name:
+        _w = target_branch_name.split()
+        for _n in range(len(_w), 0, -1):
+            _pat = r'\b' + r'\s+'.join(re.escape(x) for x in _w[:_n]) + r'\b'
+            if re.search(_pat, question, flags=re.I):
+                _q_prod = re.sub(_pat, ' ', question, flags=re.I)
+                break
+    product, item_term, display_name = extract_product_and_item(_q_prod)
+    brand = extract_brand(_q_prod)
 
     # Model-family names that customers use instead of product/brand (e.g. "iphone", "galaxy")
     if re.search(r'\b(iphones?|i\s+phones?)\b', question.lower()):
