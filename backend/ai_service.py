@@ -858,6 +858,18 @@ def answer_with_nlp(question):
         if brand and not (item_term or product):
             extra += f" AND upper(im.brand) = '{brand}'"
             scope_bits.append(brand)
+        q_nostore = re.sub(r'(exclud\w*|without|including|include)?\s*(the\s+)?(new(ly)?\s+(launched\s+|opened\s+)?|like[\s-]*for[\s-]*like\s+|same\s+|existing\s+)stores?', ' ', q_low)
+        store_mode = (not target_branch_code) and bool(re.search(
+            r'\bwhich\b.*\b(stores?|branch(?:es)?|outlets?)\b|\b(store|branch)[\s-]*wise\b|\bby\s+(store|branch)|\b(each|every|per|list(?:\s+of)?)\s+(future\s+|care\s+)?(stores?|branch(?:es)?)\b|\b(future|care)\s+stores?\b',
+            q_nostore))
+        if store_mode:
+            group_expr, group_title = "coalesce(bm.branch_name, s.branch)", "Store"
+            if 'future' in q_nostore:
+                extra += " AND upper(coalesce(bm.branch_name, s.branch)) LIKE '%FUTURE%'"
+                scope_bits.append("Future stores")
+            elif re.search(r'\bcare\b', q_nostore):
+                extra += " AND upper(coalesce(bm.branch_name, s.branch)) LIKE '%CARE%'"
+                scope_bits.append("Care stores")
         scope = " / ".join(scope_bits) if scope_bits else ("like-for-like stores" if lfl else "all stores")
         is_range_cmp = (d_a != d_a_end) or (d_b != d_b_end)
         use_focus = is_range_cmp and not (item_term or product)
@@ -870,6 +882,7 @@ def answer_with_nlp(question):
                    sumIf({rev_c}, {in_b}) AS rb
             FROM azure_sales_report s
             LEFT JOIN item_master im ON im.item_code = s.item_code
+            LEFT JOIN branch_master bm ON bm.code = s.branch
             WHERE (({in_a}) OR ({in_b})){lfl_filter}
               AND s.branch NOT IN ('SMC', '3GH')
               AND s.item_code NOT LIKE 'SRV%'
@@ -894,7 +907,7 @@ def answer_with_nlp(question):
             only_less = want_less and not want_more
             only_more = want_more and not want_less
             # For a single direction, list every product in that direction unless a top-N was asked for
-            n_show = limit if (m_lim or not (only_less or only_more)) else 50
+            n_show = limit if (m_lim or not (only_less or only_more)) else (300 if store_mode else 50)
             gainers = sorted([x for x in data if x['du'] > 0], key=lambda x: (-x['du'], -x['dr']))
             losers = sorted([x for x in data if x['du'] < 0], key=lambda x: (x['du'], x['dr']))
             name_u = lambda x: f"**{x['name']}** ({x['ua']:,} \u2192 {x['ub']:,}, {x['du']:+,})"
@@ -912,14 +925,14 @@ def answer_with_nlp(question):
                 items_all = losers if only_less else gainers
                 items = items_all[:n_show]
                 word = "less" if only_less else "more"
-                plural = "product categories" if group_title == "Product Category" else "brands"
+                plural = "product categories" if group_title == "Product Category" else ("stores" if group_title == "Store" else "brands")
                 mark, color = ("\u25bc", "#ef4444") if only_less else ("\u25b2", "#059669")
                 if not items_all:
                     return {"answer": f"Comparing **{lab_a}** with **{lab_b}** ({scope}): no {group_title.lower()} sold {word} on {lab_b} than on {lab_a}. {note}",
                             "sql": cmp_sql.strip(), "cards": [], "table": None, "suggestions": [f"Compare {lab_a} with {lab_b}"]}
                 tot_row, ua_, ub_, ra_, rb_ = subtotal(f"TOTAL ({len(items_all)} sold {word})", items_all)
-                shown_txt = "; ".join(name_u(x) for x in items)
-                more_note = f" Showing top {len(items)} of {len(items_all)}." if len(items_all) > len(items) else ""
+                shown_txt = "; ".join(name_u(x) for x in (items[:15] if store_mode else items))
+                more_note = (f" Showing top {min(15, len(items))} here; all {len(items_all)} are in the table below." if (store_mode and len(items_all) > 15) else (f" Showing top {len(items)} of {len(items_all)}." if len(items_all) > len(items) else ""))
                 ans = (f"**{len(items_all)} {plural} sold {word} on {lab_b} than on {lab_a}** ({scope}): "
                        f"{shown_txt}.{more_note} Together they went from **{ua_:,}** to **{ub_:,}** units "
                        f"(**{ub_ - ua_:+,}**) and revenue moved from **{format_inr(ra_)}** to **{format_inr(rb_)}**. {note}")
