@@ -832,7 +832,11 @@ def answer_with_nlp(question):
             cmp_periods.sort(key=lambda p: p[0])  # base = earlier period, current = later
     if len(cmp_periods) == 2 and re.search(r'\b(compar\w*|vs\.?|versus|against|difference|differ\w*|previous year|last year|yoy)\b', q_low):
         (d_a, d_a_end, lab_a), (d_b, d_b_end, lab_b) = cmp_periods
-        lfl = bool(re.search(r'like[\s-]*for[\s-]*like|\blfl\b|same[\s-]+stores?|existing\s+stores?|new(ly)?\s+(launched\s+|opened\s+)?stores?|exclud\w*\s+(the\s+)?(new|newly)', q_low))
+        # Like-for-like is the DEFAULT for period (quarter / month-span) comparisons: stores with no sales in the base period are excluded.
+        # Single-day comparisons keep all stores unless asked. Say "including new stores" to opt out.
+        _is_period = (d_a != d_a_end) or (d_b != d_b_end)
+        _optout = bool(re.search(r'\b(include|including|with)\s+(all\s+|the\s+)?(new|newly)|all\s+stores\s+including|without\s+(like[\s-]*for[\s-]*like|excluding)', q_low))
+        lfl = (not _optout) and (_is_period or bool(re.search(r'like[\s-]*for[\s-]*like|\blfl\b|same[\s-]+stores?|existing\s+stores?|new(ly)?\s+(launched\s+|opened\s+)?stores?|exclud\w*\s+(the\s+)?(new|newly)', q_low)))
         in_a = f"toDate(s.date) BETWEEN '{d_a}' AND '{d_a_end}'"
         in_b = f"toDate(s.date) BETWEEN '{d_b}' AND '{d_b_end}'"
         lfl_filter, lfl_note = "", ""
@@ -922,7 +926,7 @@ def answer_with_nlp(question):
             tot_ua, tot_ub = sum(x['ua'] for x in data), sum(x['ub'] for x in data)
             tot_ra, tot_rb = sum(x['ra'] for x in data), sum(x['rb'] for x in data)
             pct = lambda new, old: (f"{(new - old) / old * 100:+.1f}%" if old else ("new" if new else "-"))
-            want_less = bool(re.search(r'\b(less|decreas\w*|declin\w*|drop\w*|fell|fall\w*|lower|down|reduc\w*|dip\w*|lost|loss|worse|negative)\b', q_low))
+            want_less = bool(re.search(r'\b(less|decreas\w*|declin\w*|drop\w*|fell|fall\w*|lower|down|reduc\w*|dip\w*|lost|loss|worse|negative|under[\s-]?perform\w*|poor\w*|weak\w*|worst)\b', q_low))
             want_more = bool(re.search(r'\b(more|increas\w*|grew|grow\w*|gain\w*|higher|up|rise|rose|improv\w*|better|positive)\b', q_low))
             only_less = want_less and not want_more
             only_more = want_more and not want_less
