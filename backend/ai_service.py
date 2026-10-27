@@ -304,7 +304,7 @@ def _fmt_pct(new, old):
     p = _pct(new, old)
     return f"{p * 100:+.1f}%" if p is not None else ("new" if new else "-")
 
-def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, product=None, lfl=True, direction='both'):
+def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, product=None, lfl=True, direction='both', store_type=None):
     """Store x product-category comparison between two periods (A = base/earlier, B = current/later).
     Like-for-like: only stores that had sales in period A. Returns a chat response dict with an Excel download."""
     import uuid
@@ -319,6 +319,8 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
     qty = "if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))"
     rev = "toFloat64(s.sold_price) * toInt64(s.qty)"
     extra = ""
+    st_filter = f" AND upper(coalesce(bm.branch_name, s.branch)) LIKE '%{store_type}%'" if store_type else ""
+    extra += st_filter
     if branch_code:
         extra += f" AND s.branch = '{branch_code}'"
     if product:
@@ -359,7 +361,7 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
                 SELECT s.branch AS br, coalesce(any(bm.branch_name), s.branch) AS nm,
                        sum(toFloat64(s.sold_price) * toInt64(s.qty)) AS rev, min(toDate(s.date)) AS first_sale
                 FROM azure_sales_report s LEFT JOIN branch_master bm ON bm.code = s.branch
-                WHERE {in_b} AND s.branch NOT IN ('SMC','3GH')
+                WHERE {in_b} AND s.branch NOT IN ('SMC','3GH') {st_filter}
                   AND s.branch NOT IN (SELECT DISTINCT branch FROM azure_sales_report WHERE {in_a_plain})
                 GROUP BY s.branch ORDER BY rev DESC
             """, timeout=60, quote64=True) or []
@@ -393,7 +395,7 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
 
     # ---- Insight sentences ----
     ins = []
-    scope_txt = (branch_name or 'all stores') + (f" / {product}" if product else "") + (" (like-for-like)" if lfl else "")
+    scope_txt = (branch_name or (f"{store_type.title()} stores" if store_type else 'all stores')) + (f" / {product}" if product else "") + (" (like-for-like)" if lfl else "")
     ins.append(f"{lab_b} vs {lab_a} ({scope_txt}): units {tot_ua:,} -> {tot_ub:,} ({_fmt_pct(tot_ub, tot_ua)}), revenue Rs {tot_ra:,.0f} -> Rs {tot_rb:,.0f} ({_fmt_pct(tot_rb, tot_ra)}).")
     if not product:
         for k in KEY_CATS:
@@ -434,7 +436,7 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
         if growers and not branch_code:
             ins.append("Growth spread across many stores: " + "; ".join(f"{c['cat']} grew in {c['sinc']} of {c['sany']} stores (total {c['ua']:,}->{c['ub']:,}, {_fmt_pct(c['ub'], c['ua'])})" for c in growers) + ".")
         multi_up = sorted(inc_stores, key=lambda z: -z['inc'])[:3]
-        if multi_up and not branch_code:
+        if multi_up and not branch_code and not product:
             ins.append("Stores with most growing categories: " + "; ".join(f"{z['nm']} ({z['inc']} categories)" for z in multi_up) + ".")
         rev_up_units_down = [z for z in store_list if z['rb'] > z['ra'] and z['ub'] <= z['ua']]
         if rev_up_units_down and not branch_code:
@@ -458,7 +460,7 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
     if show_less and broad and not branch_code:
         ins.append("Declines spread across many stores: " + "; ".join(f"{c['cat']} fell in {c['sdec']} of {c['sany']} stores (total {c['ua']:,}->{c['ub']:,})" for c in broad) + ".")
     multi = sorted(dec_stores, key=lambda z: -z['dec'])[:3]
-    if show_less and multi and not branch_code:
+    if show_less and multi and not branch_code and not product:
         ins.append("Stores with most declining categories: " + "; ".join(f"{z['nm']} ({z['dec']} categories)" for z in multi) + ".")
     rev_down_units_up = [z for z in store_list if z['rb'] < z['ra'] and z['ub'] >= z['ua']]
     if show_less and rev_down_units_up and not branch_code:
@@ -823,8 +825,13 @@ def answer_with_nlp(question):
             _less = bool(re.search(r'\b(less|least|lowest|bottom|slowest|low|decreas\w*|declin\w*|drop\w*|fell|fall\w*|lower|down|reduc\w*|dip\w*|lost|loss|worse|negative|under[\s-]?perform\w*|poor\w*|weak\w*|worst)\b', q_low))
             _more = bool(re.search(r'\b(more|increas\w*|grew|grow\w*|gain\w*|higher|rise|rose|improv\w*|better|positive)\b', q_low))
             direction = 'less' if (_less and not _more) else ('more' if (_more and not _less) else 'both')
+            _qn = re.sub(r'(exclud\w*|without|including|include)?\s*(the\s+)?(new(ly)?\s+(launched\s+|opened\s+)?|like[\s-]*for[\s-]*like\s+|same\s+|existing\s+)stores?', ' ', q_low)
+            _stype = None
+            if not target_branch_code:
+                if re.search(r'\bfuture\b', _qn): _stype = 'FUTURE'
+                elif re.search(r'\bcare\s+stores?\b', _qn): _stype = 'CARE'
             return quarterly_insights(ins_periods[0], ins_periods[1], target_branch_code, target_branch_name,
-                                      product if (product and not item_term) else None, lfl=not no_lfl, direction=direction)
+                                      product if (product and not item_term) else None, lfl=not no_lfl, direction=direction, store_type=_stype)
 
     # 1a. TWO-DATE COMPARISON - "compare 04-09-2025 with 25-08-2026" -> which products sold more / less
     two_dates = extract_two_dates(question)
