@@ -675,6 +675,11 @@ def answer_with_nlp(question):
     q_low = question.lower().strip()
     
     start_date, end_date, date_label, is_month = extract_dates(question)
+    if not start_date:
+        # A single quarter / month span such as "JAS 2026" or "july august september 2026" -> that whole range
+        _single = extract_periods(question)
+        if len(_single) == 1:
+            start_date, end_date, date_label, is_month = _single[0][0], _single[0][1], _single[0][2], False
     product, item_term, display_name = extract_product_and_item(question)
     brand = extract_brand(question)
 
