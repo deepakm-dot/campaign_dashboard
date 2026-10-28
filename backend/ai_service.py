@@ -1682,6 +1682,16 @@ def ask_ai(question, history=None):
     Main entry point: uses Gemini if GEMINI_API_KEY is available,
     otherwise uses the built-in ClickHouse NLP engine.
     """
+    # Follow-up such as "give as an excel report": re-run the previous user question so its Excel download is returned
+    _ql = (question or '').lower()
+    if (history and len(_ql.split()) <= 10 and re.search(r'\b(excel|xlsx|spreadsheet|download|export)\b', _ql)
+            and not re.search(r'\b(store|branch|future|sale|sales|campaign)\b', _ql)):
+        _prev = [h.get('content', '') for h in history if h.get('role') == 'user'
+                 and not re.search(r'\b(excel|xlsx|spreadsheet|download|export)\b', (h.get('content') or '').lower())]
+        if _prev:
+            _res = answer_with_nlp(_prev[-1])
+            if isinstance(_res, dict) and _res.get('download'):
+                return _res
     gemini_key = os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY')
     if gemini_key:
         try:
