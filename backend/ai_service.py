@@ -827,6 +827,17 @@ def answer_with_nlp(question):
                     "suggestions": ["Top 5 campaigns by revenue", "What was the sale on 2026-08-14?", "Which product was most sold on 2026-08-14?"]
                 }
 
+    # 1a00. OVERALL STORE REVIEW - "overall report of <store> and give insights" (lifetime, internal + external)
+    if (target_branch_code and not (product and not item_term) and not item_term
+            and re.search(r'\b(overall|report|review|profile|scorecard|health|insights?|analy[sz]\w*|deep\s+dive)\b', q_low)
+            and not re.search(r'\b(yesterday|today|last|this)\b', q_low)
+            and not extract_dates(question)[0] and not extract_periods(question)):
+        try:
+            import store_review
+            return store_review.store_review(target_branch_code, target_branch_name, get_latest_sales_date())
+        except Exception as _e:
+            import traceback; traceback.print_exc()
+
     # 1a0. QUARTERLY INSIGHTS + EXCEL - "insights JAS 2026 vs JAS 2025" (store x product declines, downloadable)
     if re.search(r'\b(insights?|deep\s+dive|analy[sz]e|analysis|excel|xlsx|spreadsheet|download|export)\b', q_low) and not extract_two_dates(question):
         ins_periods = extract_periods(question)
