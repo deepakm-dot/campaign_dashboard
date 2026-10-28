@@ -289,6 +289,10 @@ _EXCL_CATS = ("'SCHEME','AC OUTDOOR','D SPARE','SPARE','GDP-SPARE','FIXED ASSETS
               "'STATIONERY ITEMS','GIFT ITEMS','OFFER KIT','FOC','SERVICE','SERVICE CHARGES','OSG WARRANTY',"
               "'CARE PLUS','LG AMC','GDOT CARE','TOTAL SECURITY','MOBILE ANTIVIRUS','CEGI','SMART CHOICE'")
 
+PROD_EXPR = ("if(coalesce(im.product,'')='', multiIf(s.item_code LIKE 'MOB%','MOBILE', s.item_code LIKE 'TV%','TV', "
+             "s.item_code LIKE 'LAP%','LAPTOP', s.item_code LIKE 'AC%','AIR CONDITIONER', s.item_code LIKE 'WM%','WASHING MACHINES', "
+             "s.item_code LIKE 'REF%','REFRIGERATORS',''), im.product)")
+
 # Only these product categories are considered in quarterly/period comparisons and insights
 FOCUS_CATS = ['CROCKERY', 'MOBILE', 'SMALL APPLIANCES', 'ACCESSORIES', 'FRAGRANCE', 'TV', 'WASHING MACHINES',
               'REFRIGERATORS', 'AIR CONDITIONER', 'AUDIO', 'LAPTOP', 'HOUSE HOLD', 'HOME APPLIANCES',
@@ -1340,7 +1344,9 @@ def answer_with_nlp(question):
             LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE {date_filter}
               AND s.branch = '{target_branch_code}'
-              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')
+              AND s.item_code NOT LIKE 'SRV%'
+              AND {PROD_EXPR} != ''
+              AND {PROD_EXPR} NOT IN ({_EXCL_CATS})
         """
         rows = run_sql(sql)
         rev = float(rows[0]['revenue']) if rows and rows[0].get('revenue') is not None else 0
@@ -1357,7 +1363,9 @@ def answer_with_nlp(question):
                 LEFT JOIN item_master im ON im.item_code = s.item_code
                 WHERE {prev_date_filter}
                   AND s.branch = '{target_branch_code}'
-                  AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')
+                  AND s.item_code NOT LIKE 'SRV%'
+                  AND {PROD_EXPR} != ''
+                  AND {PROD_EXPR} NOT IN ({_EXCL_CATS})
             """
             prev_rows = run_sql(prev_sql)
             rev_prev = float(prev_rows[0]['revenue']) if prev_rows and prev_rows[0].get('revenue') is not None else 0
@@ -1406,14 +1414,16 @@ def answer_with_nlp(question):
 
         # Query top product categories for this store on this date
         p_sql = f"""
-            SELECT coalesce(im.product, 'Other') as product,
+            SELECT {PROD_EXPR} as product,
                    sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
                    round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue
             FROM azure_sales_report s
             LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE {date_filter}
               AND s.branch = '{target_branch_code}'
-              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')
+              AND s.item_code NOT LIKE 'SRV%'
+              AND {PROD_EXPR} != ''
+              AND {PROD_EXPR} NOT IN ({_EXCL_CATS})
             GROUP BY product
             ORDER BY revenue DESC
             LIMIT 5
