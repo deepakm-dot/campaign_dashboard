@@ -25,13 +25,15 @@ def store_qoq(code, name, latest_date_str):
     base_filter = f"s.item_code NOT LIKE 'SRV%' AND {PROD} != '' AND {PROD} NOT IN ({A._EXCL_CATS})"
 
     # quarter x category (units net of returns, revenue)
-    rows = q(f"""SELECT toString(toStartOfQuarter(toDate(s.date))) AS qs, {PROD} AS grp, sum({QTY}) AS u, sum({REV}) AS r
+    rows = q(f"""SELECT toString(toStartOfQuarter(toDate(s.date))) AS qs, {PROD} AS grp, sum({QTY}) AS u, sum({REV}) AS r,
+                        sumIf({QTY}, s.sold_price >= 0 AND s.sold_price < 1 AND s.invoice_no NOT LIKE '%-SR-%') AS zu
                  FROM azure_sales_report s LEFT JOIN item_master im ON im.item_code = s.item_code
                  WHERE s.branch = '{code}' AND toDate(s.date) >= '{first}' AND {base_filter} GROUP BY qs, grp""")
     data = defaultdict(lambda: [0, 0.0])
+    zero = defaultdict(int)  # (quarter, category) -> units on lines priced under Rs 1 (free items / exchange intake)
     for r in rows:
         k = (_d(r['qs']), r['grp'])
-        data[k][0] += int(_f(r['u'])); data[k][1] += _f(r['r'])
+        data[k][0] += int(_f(r['u'])); data[k][1] += _f(r['r']); zero[k] += int(_f(r['zu']))
     all_q = sorted({k[0] for k in data})
     comp = [k for k in all_q if _qend(k) <= latest]
     part = [k for k in all_q if _qend(k) > latest]
@@ -141,6 +143,10 @@ def store_qoq(code, name, latest_date_str):
         if bl:
             ans.append(f"Mobile brands down vs {labP}: " + "; ".join(f"{b} {a:,} -> {z:,} ({_fp(z, a)})" for b, a, z in sorted(bl, key=lambda x: x[2] - x[1])[:5]) + ".")
 
+    zk = [(c, zero.get((L, c), 0), U(c, L)) for c in A.KEY_CATS if zero.get((L, c), 0)]
+    if zk:
+        ans.append(f"\n**Data note ({labL} units):** unit counts include lines priced under Rs 1 (free items / exchange intake), as in every other Ask AI answer - " +
+                   "; ".join(f"{c} {z:,} of {t:,}" for c, z, t in zk) + ". Revenue is unaffected. The Excel 'Data Notes' sheet shows this for every product and quarter.")
     ans.append("\n**How to read it:** QoQ moves are partly seasonal (AC peaks in AMJ, Onam lifts JAS, Diwali lifts OND), so YoY is the cleaner test - but the first-year base was a ramp-up. The full quarter-by-product matrix (units, revenue, QoQ/YoY per product, brands) is in the Excel.")
 
     # ---- Excel ----
@@ -195,6 +201,20 @@ def store_qoq(code, name, latest_date_str):
         sheet(f'{_quarter_label(part[-1])} to date', ['Product', f"Units {ytd['cur'][0]:%d-%b-%y} to {ytd['cur'][1]:%d-%b-%y}", f"Units {ytd['prev'][0]:%d-%b-%y} to {ytd['prev'][1]:%d-%b-%y}", 'Change', '%'],
               [[c, a, b, a - b, _pct(a, b)] for c, (a, b) in sorted(ytd['rows'].items(), key=lambda x: x[1][0] - x[1][1]) if c in focus], num=(2, 3, 4), pct=(5,), delta=(4,), keycol=1)
 
+    wn = sheet('Data Notes', ['Product'] + [f'Rs0-price units {x}' for x in ql] + [f'Total units {x}' for x in ql],
+               [[c] + [zero.get((k, c), 0) for k in comp] + [U(c, k) for k in comp] for c in sorted(cats, key=lambda c: -sum(zero.get((k, c), 0) for k in comp)) if any(zero.get((k, c), 0) for k in comp)],
+               num=tuple(range(2, 2 + 2 * len(ql))), keycol=1)
+    notes = ["DEFINITIONS USED IN THIS REPORT",
+             f"Store: {name}; period: {first:%d-%b-%Y} (first trading day, first day with sales of Rs 1 lakh or more) to {latest:%d-%b-%Y}.",
+             "Units = quantity net of returns (return invoices '-SR-' and negative-price lines are subtracted). Revenue = sold_price x qty (returns reduce it).",
+             "Merchandise only: services, warranties/care plans, schemes, gifts, stationery, spares, demo and other non-merchandise categories are excluded; branches SMC and 3GH excluded.",
+             "Unit counts include lines priced under Rs 1 (free items / exchange-intake lines) - the same definition used by every Ask AI answer. Revenue is not affected by them. See the table to the right for how many there are.",
+             "Quarters are calendar quarters (JFM, AMJ, JAS, OND). The first quarter is part-quarter (store opened mid-quarter); in-progress quarters are not used for QoQ/YoY.",
+             "YoY compares with the same quarter a year earlier; products with fewer than 30 units in the base quarter are not given a percentage."]
+    for i, t in enumerate(notes):
+        wn.cell(row=i + 1, column=2 + 2 * len(ql) + 1, value=t)
+    wn.column_dimensions[get_column_letter(3 + 2 * len(ql))].width = 150
+    wn.cell(row=1, column=3 + 2 * len(ql)).font = Font(bold=True)
     os.makedirs(A.EXPORT_DIR, exist_ok=True)
     fname = f"insights_store_qoq_{re.sub(r'[^A-Za-z0-9]+', '_', name).strip('_')}_{uuid.uuid4().hex[:10]}.xlsx"
     wb.save(os.path.join(A.EXPORT_DIR, fname))
