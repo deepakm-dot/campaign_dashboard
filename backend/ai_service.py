@@ -827,6 +827,16 @@ def answer_with_nlp(question):
                     "suggestions": ["Top 5 campaigns by revenue", "What was the sale on 2026-08-14?", "Which product was most sold on 2026-08-14?"]
                 }
 
+    # 1a000. QUARTER-TO-QUARTER STORE ANALYSIS - "quarter to quarter analysis of <store>, product wise, declining products"
+    if (target_branch_code and not item_term and not (product and not item_term)
+            and re.search(r'quarter[\s-]*(to|on|over|vs\.?|by)[\s-]*quarter|\bqoq\b|quarter[\s-]*wise|quarterly\s+(analysis|trend|comparison|report|review|performance)|each\s+quarter|every\s+quarter|all\s+quarters', q_low)
+            and not extract_periods(question)):
+        try:
+            import store_qoq
+            return store_qoq.store_qoq(target_branch_code, target_branch_name, get_latest_sales_date())
+        except Exception as _e:
+            import traceback; traceback.print_exc()
+
     # 1a00. OVERALL STORE REVIEW - "overall report of <store> and give insights" (lifetime, internal + external)
     if (target_branch_code and not (product and not item_term) and not item_term
             and re.search(r'\b(overall|report|review|profile|scorecard|health|insights?|analy[sz]\w*|deep\s+dive)\b', q_low)
