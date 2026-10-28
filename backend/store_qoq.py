@@ -19,7 +19,7 @@ def store_qoq(code, name, latest_date_str):
     first = _first_sales(A.ch_query).get(code)
     if not first:
         return {"answer": f"No sales found for {name}.", "cards": [], "table": None, "suggestions": []}
-    base_filter = f"s.item_code NOT LIKE 'SRV%' AND {PROD} != '' AND {PROD} NOT IN ({A._EXCL_CATS})"
+    base_filter = "coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')"
 
     # quarter x category (units net of returns, revenue) + units on lines priced under Rs 1
     rows = q(f"""SELECT toString(toStartOfQuarter(toDate(s.date))) AS qs, {PROD} AS grp, sum({QTY}) AS u, sum({REV}) AS r,

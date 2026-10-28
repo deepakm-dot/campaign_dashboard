@@ -101,7 +101,7 @@ def store_review(code, name, latest_date_str):
     base_ok = first <= bq_end  # store traded in base quarter
 
     # ---- Q1 store monthly x category ----
-    base_filter = f"s.item_code NOT LIKE 'SRV%' AND {PROD} != '' AND {PROD} NOT IN ({excl})"
+    base_filter = "coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')"
     rows1 = q(f"""SELECT toString(toStartOfMonth(toDate(s.date))) AS m, {PROD} AS grp, sum({QTY}) AS u, sum({REV}) AS r
                   FROM azure_sales_report s LEFT JOIN item_master im ON im.item_code = s.item_code
                   WHERE s.branch = '{code}' AND toDate(s.date) >= '{first}' AND {base_filter} GROUP BY m, grp""")
@@ -532,7 +532,7 @@ def store_review(code, name, latest_date_str):
 
     w0 = wb.active; w0.title = 'Review'
     w0.append([f"Overall store review: {name}"]); w0['A1'].font = Font(bold=True, size=14)
-    w0.append([f"Data to {latest:%d-%b-%Y}. Merchandise sales only (services, warranties, gifts, stationery, spares, demo excluded); units net of returns."])
+    w0.append([f"Data to {latest:%d-%b-%Y}. Total store sales (inter-branch schemes & demo excluded); units net of returns."])
     w0.append([])
     if ins_gap:
         w0.append(["POTENTIAL VS PERFORMANCE DIAGNOSIS"]); w0.cell(w0.max_row, 1).font = Font(bold=True, color='C00000')

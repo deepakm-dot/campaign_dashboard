@@ -1344,9 +1344,7 @@ def answer_with_nlp(question):
             LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE {date_filter}
               AND s.branch = '{target_branch_code}'
-              AND s.item_code NOT LIKE 'SRV%'
-              AND {PROD_EXPR} != ''
-              AND {PROD_EXPR} NOT IN ({_EXCL_CATS})
+              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')
         """
         rows = run_sql(sql)
         rev = float(rows[0]['revenue']) if rows and rows[0].get('revenue') is not None else 0
@@ -1363,9 +1361,7 @@ def answer_with_nlp(question):
                 LEFT JOIN item_master im ON im.item_code = s.item_code
                 WHERE {prev_date_filter}
                   AND s.branch = '{target_branch_code}'
-                  AND s.item_code NOT LIKE 'SRV%'
-                  AND {PROD_EXPR} != ''
-                  AND {PROD_EXPR} NOT IN ({_EXCL_CATS})
+                  AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')
             """
             prev_rows = run_sql(prev_sql)
             rev_prev = float(prev_rows[0]['revenue']) if prev_rows and prev_rows[0].get('revenue') is not None else 0
@@ -1414,16 +1410,14 @@ def answer_with_nlp(question):
 
         # Query top product categories for this store on this date
         p_sql = f"""
-            SELECT {PROD_EXPR} as product,
+            SELECT coalesce(im.product, 'Other') as product,
                    sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
                    round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue
             FROM azure_sales_report s
             LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE {date_filter}
               AND s.branch = '{target_branch_code}'
-              AND s.item_code NOT LIKE 'SRV%'
-              AND {PROD_EXPR} != ''
-              AND {PROD_EXPR} NOT IN ({_EXCL_CATS})
+              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')
             GROUP BY product
             ORDER BY revenue DESC
             LIMIT 5
