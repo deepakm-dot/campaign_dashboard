@@ -20,6 +20,13 @@ DRIVE_URL = "https://script.google.com/macros/s/AKfycbx8RQoxU-Js-kQuY7cs90K7Rc1-
 NOISE = {'and','the','for','with','sale','rcs','sms','wtsp','whatsapp',
          'voice','campaign','offers','onam','data'}
 
+NON_STORE_TOKENS = {
+    'future', 'mini', 'plus', 'pro', 'store', 'stored', 'all', 'kerala',
+    'home', 'digital', 'fest', 'appliance', 'appliances', 'offer', 'special',
+    'support', 'august', 'september', 'october', 'november', 'december',
+    'visited', 'last', 'year', 'years', 'aug', 'sept', 'sep', 'oct',
+}
+
 def _normalize(text):
     return re.sub(r'[^a-z0-9]', '', str(text).lower())
 
@@ -27,29 +34,45 @@ def _word_tokens(text):
     words = re.findall(r'[a-zA-Z0-9]{3,}', str(text))
     return set(w.lower() for w in words if w.lower() not in NOISE)
 
+def _core_store_tokens(camp_name):
+    low = str(camp_name or '').lower()
+    if 'all kerala' in low or 'home & digital' in low:
+        return set()
+    return {t for t in _word_tokens(camp_name) if t not in NON_STORE_TOKENS and not t.isdigit()}
+
+def _has_store_identity(camp_name, raw_file_name):
+    core = _core_store_tokens(camp_name)
+    if not core:
+        return True
+    file_tokens = _word_tokens(raw_file_name)
+    norm_file = _normalize(raw_file_name)
+    return core.issubset(file_tokens) or all(t in norm_file for t in core)
+
 def _token_match_score(camp_name, data_source, raw_file_name):
     clean_camp = camp_name.strip()
     camp_only_tokens = _word_tokens(clean_camp)
     camp_tokens = _word_tokens(clean_camp + ' ' + data_source)
     file_tokens = _word_tokens(raw_file_name)
     if not camp_only_tokens or not file_tokens: return 0.0
-    
-    # Check if data_source tokens are well matched
-    ds_tokens = _word_tokens(data_source)
-    if ds_tokens and ds_tokens.issubset(file_tokens):
-        return 0.85
-    
-    # Store identity tokens (e.g. 'iron', 'bridge', 'falnir', 'palakkad')
-    core_store_tokens = {t for t in camp_only_tokens if t not in {'future', 'mini', 'plus', 'pro', 'store', 'all', 'kerala'}}
-    if core_store_tokens and not core_store_tokens.issubset(file_tokens):
+
+    # Store identity tokens (e.g. 'erattupetta', 'kannur', 'adoor', 'falnir', 'iron', 'bridge')
+    # MUST match first so a store campaign never falls back to another store's file via data_source.
+    if not _has_store_identity(clean_camp, raw_file_name):
         return 0.0
-        
+
+    core_store_tokens = _core_store_tokens(clean_camp)
+    ds_tokens = _word_tokens(data_source)
+    if not core_store_tokens and ds_tokens and ds_tokens.issubset(file_tokens):
+        return 0.85
+
     common = camp_tokens & file_tokens
     union = camp_tokens | file_tokens
     score = len(common) / len(union) if union else 0.0
-    
+
     # Bonus if 'future' matches on both sides
     if ('future' in camp_only_tokens) == ('future' in file_tokens):
+        score += 0.15
+    if ds_tokens and ds_tokens.issubset(file_tokens):
         score += 0.15
     return score
 
@@ -77,6 +100,7 @@ KPI_RESET = {'purchase_count': 0, 'purchase_value': 0.0, 'conversion_rate': 0.0,
              'new_customers': 0, 'existing_customers': 0}
 FP_PREFIX = 'drive_fp:'          # config key per campaign: fingerprint of the customer file last loaded
 TRUST_PREFIX = 'drive_fp_trusted:'   # set once THIS sync loaded the campaign's customers from that file
+LOADED_FID_PREFIX = 'drive_loaded_fid:'  # exact file_key actually loaded into campaign_customers
 MIN_SIMILARITY = 0.5             # unverified replacement file must be >= 50% similar (Jaccard) to the current customers
 UA = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 
@@ -88,6 +112,7 @@ def match_campaign(camp, normalized_drive, local_candidates):
     data_source = (camp['data_source'] or '').strip()
     camp_group = (camp['campaign_group'] or '').strip()
     start_date = camp['start_date']
+    core = _core_store_tokens(camp_name)
 
     # Determine expected month string (e.g. "SEPTEMBER 2026")
     expected_month = ""
@@ -104,36 +129,41 @@ def match_campaign(camp, normalized_drive, local_candidates):
     clean_cn = _normalize(camp_name)
     clean_cg = _normalize(camp_group)
     clean_ds = _normalize(data_source)
+    clean_cn_ds = _normalize(camp_name + data_source)
 
     for (fi, raw, norm) in normalized_drive:
+        # Store-specific campaigns must match their store identity tokens (prevents cross-store / All-Kerala fallback)
+        if core and not _has_store_identity(camp_name, raw):
+            continue
+        if not core and ('all kerala' in camp_name.lower() or 'home & digital' in camp_name.lower()):
+            if 'future' in raw.lower() and clean_cn not in norm:
+                continue
+
         parent_path = str(fi.get('parentPath') or '').lower()
         folder_name = str(fi.get('folder') or '').lower()
         full_loc = parent_path + ' ' + folder_name + ' ' + raw.lower()
+        norm_loc = _normalize(full_loc)
 
-        # Exact match on normalized campaign name
-        if norm == clean_cn:
-            matched_file = fi; best_score = 1.0; break
-
-        # Perfect prefix match (e.g., "Karamana_Store Data...")
-        if raw.lower().startswith(camp_name.lower() + "_") or raw.lower().startswith(clean_cn + "_"):
-            matched_file = fi; best_score = 0.95; break
-
-        # Exact match on campaign name + data source combined
-        if norm == _normalize(camp_name + data_source):
-            matched_file = fi; best_score = 0.92; break
-
-        # Exact match on data_source
-        if clean_ds and (norm == clean_ds or clean_ds in norm):
-            matched_file = fi; best_score = 0.90; break
-
-        # Fuzzy token matching
-        score = _token_match_score(camp_name, data_source, raw)
-
-        # Add month preference bonus
+        # Month and campaign_group folder bonuses separate Sept vs Oct runs for the same store
+        ctx_bonus = 0.0
         if month_name and month_name in full_loc:
-            score += 0.10
-        if clean_cg and (clean_cg in _normalize(full_loc) or clean_cn in _normalize(full_loc)):
-            score += 0.15
+            ctx_bonus += 0.10
+        if clean_cg and clean_cg in norm_loc:
+            ctx_bonus += 0.20
+
+        raw_tidy = re.sub(r'\s*_\s*', '_', raw.strip().lower())
+        camp_tidy = camp_name.lower()
+
+        if norm == clean_cn:
+            score = 1.00 + ctx_bonus
+        elif norm == clean_cn_ds:
+            score = 0.98 + ctx_bonus
+        elif raw_tidy.startswith(camp_tidy + "_") or raw_tidy.startswith(clean_cn + "_"):
+            score = 0.95 + ctx_bonus
+        elif not core and clean_ds and len(clean_ds) >= 12 and (norm == clean_ds or clean_ds in norm):
+            score = 0.90 + ctx_bonus
+        else:
+            score = _token_match_score(camp_name, data_source, raw) + ctx_bonus
 
         if score > best_score and score >= 0.50:
             best_score = score
@@ -145,14 +175,17 @@ def match_campaign(camp, normalized_drive, local_candidates):
         local_best_score = 0.0
         for fpath in local_candidates:
             fname = os.path.basename(fpath).lower()
-            norm_local = _normalize(os.path.splitext(fname)[0])
+            raw_local = os.path.splitext(fname)[0]
+            if core and not _has_store_identity(camp_name, raw_local):
+                continue
+            norm_local = _normalize(raw_local)
             if norm_local == clean_cn:
                 local_matched_path = fpath; break
-            if norm_local == _normalize(camp_name + data_source) or (clean_ds and clean_ds in norm_local):
+            if norm_local == clean_cn_ds or (not core and clean_ds and len(clean_ds) >= 12 and clean_ds in norm_local):
                 local_matched_path = fpath; break
-            if clean_cg and clean_cg in norm_local:
+            if not core and clean_cg and clean_cg in norm_local:
                 local_matched_path = fpath; break
-            score = _token_match_score(camp_name, data_source, fname)
+            score = _token_match_score(camp_name, data_source, raw_local)
             if score > local_best_score and score >= 0.50:
                 local_best_score = score
                 local_matched_path = fpath
@@ -325,6 +358,7 @@ def main():
     have_customers = ch_db.customer_counts()
     stored_fp = ch_db.get_configs(FP_PREFIX)
     trusted = ch_db.get_configs(TRUST_PREFIX)
+    stored_loaded = ch_db.get_configs(LOADED_FID_PREFIX)
     matches = {c['id']: match_campaign(c, normalized_drive, local_candidates) for c in campaigns}
 
     # Step 3: Detect NEW and CHANGED customer files
@@ -336,19 +370,33 @@ def main():
     print(f"\n2. Checking {len(to_check)} customer files for changes (size / last-modified)...", flush=True)
     current_fp = fingerprints(to_check) if to_check else {}
 
-    work = []                # (campaign, reason)
+    work = []                # (campaign, reason, verify)
     new_baselines = {}       # fingerprints to remember without reloading
     for camp in campaigns:
         cid = camp['id']
-        mf, lp, _ = matches[cid]
+        mf, lp, score = matches[cid]
         if cid not in have_customers:
             work.append((camp, 'new', False))
             continue
         if not (mf or lp):
             continue
-        fp = current_fp.get(file_key(mf, lp))
+        fkey = file_key(mf, lp)
+        fp = current_fp.get(fkey)
         if not fp:
             continue
+
+        # Repair store campaigns that previously ingested another store's / All-Kerala fallback file
+        # before the store's own file was uploaded (e.g. 0 attributed purchases, or >1M All-Kerala rows on a single store).
+        is_store_camp = bool(_core_store_tokens(camp['campaign_name']))
+        loaded_key = stored_loaded.get(f"{LOADED_FID_PREFIX}{cid}")
+        if is_store_camp and score >= 0.90 and loaded_key != fkey:
+            p_cnt = int(camp.get('purchase_count') or 0)
+            tgt = int(camp.get('target_size') or 0)
+            oversized = have_customers[cid] > max(tgt * 3, 1_000_000)
+            if p_cnt == 0 or oversized:
+                work.append((camp, 'updated', False))
+                continue
+
         old = stored_fp.get(f"{FP_PREFIX}{cid}")
         if not old:
             new_baselines[f"{FP_PREFIX}{cid}"] = fp      # first time seen: remember it, keep loaded customers
@@ -441,9 +489,11 @@ def main():
             continue
 
         fp = fingerprint(mf, lp)
+        cfg_updates = {f"{LOADED_FID_PREFIX}{camp_id}": file_key(mf, lp), f"{TRUST_PREFIX}{camp_id}": '1'}
         if fp:
             # this sync loaded the customers from this file, so later edits to it can be trusted
-            ch_db.set_configs({f"{FP_PREFIX}{camp_id}": fp, f"{TRUST_PREFIX}{camp_id}": '1'})
+            cfg_updates[f"{FP_PREFIX}{camp_id}"] = fp
+        ch_db.set_configs(cfg_updates)
         action = 'Reloaded' if reason == 'updated' else 'Inserted'
         print(f"   {action} {inserted:,} customers for [{camp_id}] '{camp_name}' into ClickHouse.", flush=True)
         processed += 1

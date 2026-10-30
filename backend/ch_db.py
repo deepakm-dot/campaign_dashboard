@@ -126,7 +126,7 @@ def _post(sql=None, data_path=None, params=None, timeout=300, retries=3):
 def query(sql, timeout=120, quote64=False):
     """Run a SELECT and return a list of dicts. 64-bit ints come back as real numbers
     (pass quote64=True for ClickHouse's default of quoting them as strings)."""
-    params = {} if quote64 else {'output_format_json_quote_64bit_integers': 0}
+    params = {'readonly': 1} if quote64 else {'readonly': 1, 'output_format_json_quote_64bit_integers': 0}
     body = _post(sql + ' FORMAT JSON', params=params, timeout=timeout)
     return json.loads(body).get('data', [])
 
