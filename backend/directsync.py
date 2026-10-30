@@ -4,7 +4,8 @@ This bypasses threading/buffering to show real errors.
 """
 import os, io, csv, json, urllib.request, base64, re, sys
 from openpyxl import load_workbook
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
@@ -101,8 +102,52 @@ KPI_RESET = {'purchase_count': 0, 'purchase_value': 0.0, 'conversion_rate': 0.0,
 FP_PREFIX = 'drive_fp:'          # config key per campaign: fingerprint of the customer file last loaded
 TRUST_PREFIX = 'drive_fp_trusted:'   # set once THIS sync loaded the campaign's customers from that file
 LOADED_FID_PREFIX = 'drive_loaded_fid:'  # exact file_key actually loaded into campaign_customers
+FULL_FP_SCAN_KEY = 'last_full_fp_scan'   # periodic check timestamp for older settled campaigns
+ALL_MONTHS = {'january','february','march','april','may','june','july','august','september','october','november','december'}
 MIN_SIMILARITY = 0.5             # unverified replacement file must be >= 50% similar (Jaccard) to the current customers
 UA = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+
+
+def _has_month_conflict(month_name, expected_year, parent_path, folder_name):
+    """True if the Drive folder path explicitly belongs to a different month or year than the campaign."""
+    if not month_name:
+        return False
+    loc_dirs = f"{parent_path} {folder_name}".lower()
+    dir_words = set(re.findall(r'[a-z]+', loc_dirs))
+    mentioned_months = dir_words & ALL_MONTHS
+    if mentioned_months and month_name not in mentioned_months:
+        return True
+    if expected_year:
+        yr_matches = [int(y) for y in re.findall(r'\b(20\d{2})\b', parent_path)]
+        if yr_matches and expected_year not in yr_matches:
+            return True
+    return False
+
+
+def _has_folder_date_conflict(start_date, end_date, folder_name):
+    """True if the Drive subfolder explicitly names a date range or single day that differs from the campaign's window.
+    Prevents a new campaign (added in Sheets before its Drive folder is uploaded) from grabbing an earlier same-month folder."""
+    if not start_date or len(start_date) < 10 or not folder_name:
+        return False
+    try:
+        s_day = int(start_date[8:10])
+        e_day = int((end_date or start_date)[8:10])
+    except Exception:
+        return False
+    fn = folder_name.lower()
+    rng = re.search(r'(\d{1,2})\s*(?:th|st|nd|rd)?\s*[-&]\s*(\d{1,2})', fn)
+    if rng:
+        d1, d2 = int(rng.group(1)), int(rng.group(2))
+        if 1 <= d1 <= 31 and 1 <= d2 <= 31 and (d1, d2) != (s_day, e_day):
+            return True
+        return False
+    months_re = '|'.join(ALL_MONTHS)
+    single = re.search(rf'(?:{months_re})\s*(\d{{1,2}})\b', fn) or re.search(rf'\b(\d{{1,2}})\s*(?:th|st|nd|rd)?\s*(?:{months_re})', fn)
+    if single:
+        d1 = int(single.group(1))
+        if 1 <= d1 <= 31 and (d1, d1) != (s_day, e_day):
+            return True
+    return False
 
 
 def match_campaign(camp, normalized_drive, local_candidates):
@@ -112,16 +157,19 @@ def match_campaign(camp, normalized_drive, local_candidates):
     data_source = (camp['data_source'] or '').strip()
     camp_group = (camp['campaign_group'] or '').strip()
     start_date = camp['start_date']
+    end_date = camp.get('end_date') or start_date
     core = _core_store_tokens(camp_name)
 
     # Determine expected month string (e.g. "SEPTEMBER 2026")
     expected_month = ""
     month_name = ""
+    expected_year = None
     if start_date:
         try:
             d = datetime.strptime(start_date[:10], '%Y-%m-%d')
             expected_month = f"{d.strftime('%B').upper()} {d.year}"
             month_name = d.strftime('%B').lower()
+            expected_year = d.year
         except Exception: pass
 
     # Match Drive files
@@ -141,6 +189,13 @@ def match_campaign(camp, normalized_drive, local_candidates):
 
         parent_path = str(fi.get('parentPath') or '').lower()
         folder_name = str(fi.get('folder') or '').lower()
+
+        # Never match across different month folders or conflicting date-range subfolders
+        if _has_month_conflict(month_name, expected_year, parent_path, folder_name):
+            continue
+        if _has_folder_date_conflict(start_date, end_date, folder_name):
+            continue
+
         full_loc = parent_path + ' ' + folder_name + ' ' + raw.lower()
         norm_loc = _normalize(full_loc)
 
@@ -362,11 +417,25 @@ def main():
     matches = {c['id']: match_campaign(c, normalized_drive, local_candidates) for c in campaigns}
 
     # Step 3: Detect NEW and CHANGED customer files
+    # Fast path: check recent/unattributed/untracked campaigns on every cycle (~3s), and full historical scan every 30 min.
+    recent_cutoff = (datetime.now() - timedelta(days=21)).strftime('%Y-%m-%d')
+    last_full_scan = float(ch_db.get_config(FULL_FP_SCAN_KEY) or 0)
+    do_full_scan = (time.time() - last_full_scan) >= 1800
+
     to_check = {}
     for camp in campaigns:
-        mf, lp, _ = matches[camp['id']]
-        if camp['id'] in have_customers and (mf or lp):
+        cid = camp['id']
+        mf, lp, _ = matches[cid]
+        if cid not in have_customers or not (mf or lp):
+            continue
+        end_dt = (camp.get('end_date') or camp.get('start_date') or '')[:10]
+        is_recent = (end_dt >= recent_cutoff) or (int(camp.get('purchase_count') or 0) == 0)
+        needs_fp = (f"{FP_PREFIX}{cid}" not in stored_fp)
+        if do_full_scan or is_recent or needs_fp:
             to_check[file_key(mf, lp)] = (mf, lp)
+    if do_full_scan:
+        ch_db.set_config(FULL_FP_SCAN_KEY, int(time.time()))
+
     print(f"\n2. Checking {len(to_check)} customer files for changes (size / last-modified)...", flush=True)
     current_fp = fingerprints(to_check) if to_check else {}
 
@@ -389,6 +458,7 @@ def main():
         # before the store's own file was uploaded (e.g. 0 attributed purchases, or >1M All-Kerala rows on a single store).
         is_store_camp = bool(_core_store_tokens(camp['campaign_name']))
         loaded_key = stored_loaded.get(f"{LOADED_FID_PREFIX}{cid}")
+        is_managed = (f"{TRUST_PREFIX}{cid}" in trusted) or bool(loaded_key)
         if is_store_camp and score >= 0.90 and loaded_key != fkey:
             p_cnt = int(camp.get('purchase_count') or 0)
             tgt = int(camp.get('target_size') or 0)
@@ -405,10 +475,12 @@ def main():
             same_id, same_name = o[0] == n[0], (o[3] if len(o) > 3 else '') == (n[3] if len(n) > 3 else '')
             if same_id or same_name:
                 # same file edited in place, or re-uploaded under the same name -> reload it.
-                # If this sync never loaded the campaign from that file (legacy data), verify first.
-                work.append((camp, 'updated', f"{TRUST_PREFIX}{cid}" not in trusted))
+                work.append((camp, 'updated', not is_managed))
+            elif is_managed and score >= 0.90:
+                # Active/synced campaign got a replacement customer file in its own month+date folder -> reload immediately!
+                work.append((camp, 'updated', False))
             else:
-                # the matcher now points at a different file; just remember it (never reload from a guess)
+                # Legacy migrated campaign: remember fingerprint without touching settled historical rows
                 new_baselines[f"{FP_PREFIX}{cid}"] = fp
     if new_baselines:
         ch_db.set_configs(new_baselines)
@@ -489,7 +561,11 @@ def main():
             continue
 
         fp = fingerprint(mf, lp)
-        cfg_updates = {f"{LOADED_FID_PREFIX}{camp_id}": file_key(mf, lp), f"{TRUST_PREFIX}{camp_id}": '1'}
+        cfg_updates = {
+            f"{LOADED_FID_PREFIX}{camp_id}": file_key(mf, lp),
+            f"{TRUST_PREFIX}{camp_id}": '1',
+            f"kpi_refreshed:{camp_id}": '0',   # force fixkpi.py to run attribution immediately in this cycle
+        }
         if fp:
             # this sync loaded the customers from this file, so later edits to it can be trusted
             cfg_updates[f"{FP_PREFIX}{camp_id}"] = fp

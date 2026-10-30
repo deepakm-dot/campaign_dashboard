@@ -2785,7 +2785,13 @@ async function pollSyncStatus() {
       
       if (data.status === 'Success') {
         showToast('Sync completed! ' + (data.message || ''), 'success');
+        _ssCache = {};
+        _ssLiftCache = {};
+        _ssBrandCache = {};
         loadAll();
+        if (currentStoreSalesId && document.getElementById('ss-overlay') && document.getElementById('ss-overlay').classList.contains('open')) {
+          openStoreSales(currentStoreSalesId, true);
+        }
       } else if (data.status === 'Error') {
         showToast('Sync note: ' + (data.message || 'Complete'), 'error');
       }
@@ -2837,26 +2843,34 @@ function showToast(msg, type = 'info') {
 }
 
 let _lastKnownSync = null;
+let _lastKnownSeq = null;
+let _wasSyncing = false;
 async function autoCheckSync() {
   try {
     const res = await fetch('/api/sync/status');
     const data = await res.json();
-    if (data && data.last_sync) {
-      if (_lastKnownSync && _lastKnownSync !== data.last_sync) {
-        console.log('[AUTO-SYNC] Background sync finished at:', data.last_sync);
-        showToast('Dashboard auto-updated with latest sync data', 'success');
-        _ssCache = {};
-        _ssLiftCache = {};
-        loadAll();
-        if (currentStoreSalesId && document.getElementById('ss-overlay') && document.getElementById('ss-overlay').classList.contains('open')) {
-          openStoreSales(currentStoreSalesId, true);
-        }
+    if (!data) return;
+    const seqChanged = (_lastKnownSeq !== null && typeof data.sync_seq === 'number' && data.sync_seq !== _lastKnownSeq);
+    const syncChanged = (_lastKnownSync !== null && data.last_sync && data.last_sync !== _lastKnownSync);
+    const justFinished = (_wasSyncing && !data.is_syncing && data.status === 'Success');
+    if (seqChanged || syncChanged || justFinished) {
+      console.log('[AUTO-SYNC] Background sync finished at:', data.last_sync);
+      showToast('Dashboard auto-updated with latest sync data', 'success');
+      _ssCache = {};
+      _ssLiftCache = {};
+      _ssBrandCache = {};
+      loadAll();
+      if (currentStoreSalesId && document.getElementById('ss-overlay') && document.getElementById('ss-overlay').classList.contains('open')) {
+        openStoreSales(currentStoreSalesId, true);
       }
-      _lastKnownSync = data.last_sync;
     }
+    if (data.last_sync) _lastKnownSync = data.last_sync;
+    if (typeof data.sync_seq === 'number') _lastKnownSeq = data.sync_seq;
+    _wasSyncing = !!data.is_syncing;
   } catch (e) {}
 }
-setInterval(autoCheckSync, 15000);
+setInterval(autoCheckSync, 8000);
+autoCheckSync();
 setInterval(() => { loadAll(); }, 300000);
 
 loadAll();
@@ -3105,7 +3119,7 @@ async function submitAiChat() {
       <div class="ss-topbar-title" id="ss-topbar-name">Store Sales</div>
     </div>
     <div class="ss-topbar-right">
-      <button class="ss-newwin-btn" onclick="openStoreSales(currentStoreSalesId, true)" title="Refresh store sales data live from ClickHouse">
+      <button class="ss-newwin-btn" onclick="fetch('/api/sync',{method:'POST'}).catch(()=>{});openStoreSales(currentStoreSalesId, true)" title="Refresh store sales & trigger live Google Sheets/Drive sync">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
         Refresh
       </button>

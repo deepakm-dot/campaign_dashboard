@@ -584,17 +584,31 @@
         + '</div>';
     }
 
-    Promise.all([
-      fetch('/api/campaign/' + _campaignId + '/store-sales').then(r => r.json()),
-      fetch('/api/campaign/' + _campaignId + '/incremental-lift' + (_selectedBaseStart ? '?base_start=' + _selectedBaseStart : '')).then(r => r.json()).catch(() => null)
-    ])
-    .then(([data, liftData]) => {
-      _storeData = data;
-      renderPage(data, liftData);
-    })
-    .catch(err => {
-      document.getElementById('content-area').innerHTML = '<div style="text-align:center;padding:60px 20px;color:#f87171;"><div style="font-size:32px;margin-bottom:12px;">\u26a0\ufe0f</div><div style="font-size:18px;font-weight:700;">Failed to load store sales</div><div style="font-size:13px;color:var(--muted);margin-top:6px;">' + err.message + '</div></div>';
-    });
+    function loadStoreSalesData() {
+      return Promise.all([
+        fetch('/api/campaign/' + _campaignId + '/store-sales').then(r => r.json()),
+        fetch('/api/campaign/' + _campaignId + '/incremental-lift' + (_selectedBaseStart ? '?base_start=' + _selectedBaseStart : '')).then(r => r.json()).catch(() => null)
+      ])
+      .then(([data, liftData]) => {
+        _storeData = data;
+        renderPage(data, liftData);
+      })
+      .catch(err => {
+        document.getElementById('content-area').innerHTML = '<div style="text-align:center;padding:60px 20px;color:#f87171;"><div style="font-size:32px;margin-bottom:12px;">\u26a0\ufe0f</div><div style="font-size:18px;font-weight:700;">Failed to load store sales</div><div style="font-size:13px;color:var(--muted);margin-top:6px;">' + err.message + '</div></div>';
+      });
+    }
+    loadStoreSalesData();
+
+    var _ssLastSeq = null, _ssWasSyncing = false;
+    setInterval(function() {
+      fetch('/api/sync/status').then(function(r){ return r.json(); }).then(function(st) {
+        if (!st) return;
+        var changed = (_ssLastSeq !== null && typeof st.sync_seq === 'number' && st.sync_seq !== _ssLastSeq) || (_ssWasSyncing && !st.is_syncing && st.status === 'Success');
+        if (changed) loadStoreSalesData();
+        if (typeof st.sync_seq === 'number') _ssLastSeq = st.sync_seq;
+        _ssWasSyncing = !!st.is_syncing;
+      }).catch(function(){});
+    }, 8000);
 
     function renderPage(data, liftData) {
       const branch      = data.branch || '';

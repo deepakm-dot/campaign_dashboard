@@ -173,16 +173,18 @@ print(f"Found {len(camps)} campaigns with customers.", flush=True)
 # re-attributed too, at most once per LIVE_REFRESH_MINUTES. Older settled campaigns stay frozen.
 import time
 from datetime import datetime, timedelta
-LIVE_REFRESH_MINUTES = 20
+LIVE_REFRESH_MINUTES = 10
 KPI_TS_PREFIX = 'kpi_refreshed:'
 kpi_refreshed = ch_db.get_configs(KPI_TS_PREFIX)
-_cutoff = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+_cutoff = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
 
 def _needs_live_refresh(camp):
+    last = float(kpi_refreshed.get(f"{KPI_TS_PREFIX}{camp['id']}", 0) or 0)
+    if last == 0:
+        return True
     end = (camp.get('end_date') or camp.get('start_date') or '')[:10]
     if not end or end < _cutoff:
         return False
-    last = float(kpi_refreshed.get(f"{KPI_TS_PREFIX}{camp['id']}", 0) or 0)
     return (time.time() - last) >= LIVE_REFRESH_MINUTES * 60
 
 for camp in camps:
@@ -198,6 +200,11 @@ for camp in camps:
     n_cnt = int(camp['new_customers'] or 0)
     e_cnt = int(camp['existing_customers'] or 0)
     
+    last_kpi_ts = float(kpi_refreshed.get(f"{KPI_TS_PREFIX}{camp_id}", 0) or 0)
+    if p_cnt == 0 and last_kpi_ts > 0 and (time.time() - last_kpi_ts) < LIVE_REFRESH_MINUTES * 60:
+        # Already checked recently with 0 POS matches; re-check every LIVE_REFRESH_MINUTES as POS invoices arrive
+        continue
+
     if p_cnt > 0 and (n_cnt + e_cnt) == p_cnt and not _needs_live_refresh(camp):
         # Reconcile conversion rate & ROI with latest sheet values (budget & sms_delivered)
         conv_rate = (p_cnt / sms_delivered * 100) if sms_delivered > 0 else 0

@@ -147,7 +147,19 @@ def _token_match_score(campaign_name, data_source, file_name_normalized):
     score = len(common) / len(camp_tokens)
     return score
 
-def parse_campaign_group_dates(campaign_group, sheet_date_str):
+def _parse_sheet_date_ist(date_str):
+    from datetime import datetime, timedelta
+    s = str(date_str or '').strip()
+    if 'T' in s and s.endswith('Z'):
+        try:
+            clean_iso = s[:-1].split('.')[0]
+            dt_utc = datetime.strptime(clean_iso, '%Y-%m-%dT%H:%M:%S')
+            return (dt_utc + timedelta(hours=5, minutes=30)).strftime('%Y-%m-%d')
+        except Exception:
+            return s.split('T')[0]
+    return s.split('T')[0] if 'T' in s else s[:10]
+
+def parse_campaign_group_dates(campaign_group, sheet_date_str, sheet_tab=''):
     """
     Extract start_date and end_date from Campaign Group name.
     Examples:
@@ -166,16 +178,33 @@ def parse_campaign_group_dates(campaign_group, sheet_date_str):
         'sep':9,'oct':10,'nov':11,'dec':12
     }
 
-    # Get year and fallback month from the Sheets date column
+    # Get year and fallback month from the IST Sheets date column or _sheet_tab (e.g. 'November 2026')
+    year, month = None, None
+    tab_low = str(sheet_tab or '').lower()
+    tab_yr = re.search(r'\b(20\d{2})\b', tab_low)
+    if tab_yr:
+        year = int(tab_yr.group(1))
+    for name, num in MONTH_MAP.items():
+        if re.search(rf'\b{name}\b', tab_low):
+            month = num
+            break
+
     try:
         base = datetime.strptime(sheet_date_str[:10], '%Y-%m-%d')
-        year, month = base.year, base.month
+        if year is None:
+            year = base.year
+        if month is None:
+            month = base.month
     except Exception:
-        return sheet_date_str[:10], sheet_date_str[:10]
+        if year is None or month is None:
+            return sheet_date_str[:10], sheet_date_str[:10]
 
     text = campaign_group.lower()
 
-    # Override month if explicitly stated in group name
+    # Override month/year if explicitly stated in group name
+    grp_yr = re.search(r'\b(20\d{2})\b', text)
+    if grp_yr:
+        year = int(grp_yr.group(1))
     for name, num in MONTH_MAP.items():
         if name in text:
             month = num
@@ -247,13 +276,13 @@ def _sync_campaign_master():
             data_source = str(row.get('Data ', '') or row.get('Data', '')).strip()
             budget = float(row.get('Actual Cost', 0) or 0)
             date_str = str(row.get('Date', ''))
-            sheet_date = date_str.split('T')[0] if 'T' in date_str else date_str
+            sheet_date = _parse_sheet_date_ist(date_str)
             sms_delivered = int(row.get('SMS Delivered', 0) or 0)
             sl_no = int(row.get('Sl', 0) or 0)
             sheet_tab = str(row.get('_sheet_tab', '')).strip()
             
             # Extract actual campaign start & end dates from Campaign Group name
-            start_date, end_date = parse_campaign_group_dates(camp_group, sheet_date)
+            start_date, end_date = parse_campaign_group_dates(camp_group, sheet_date, sheet_tab)
 
             b_code, b_name = resolve_branch_from_clickhouse(camp_name)
 
@@ -1589,43 +1618,52 @@ import time
 _SYNC_STATUS = {
     "is_syncing": False,
     "last_sync": None,
+    "sync_seq": 0,
     "status": "Idle",
     "message": ""
 }
+_SYNC_PENDING = False
 
 def run_sync_cycle():
     import subprocess
-    global _SYNC_STATUS
+    global _SYNC_STATUS, _SYNC_PENDING
     if _SYNC_STATUS["is_syncing"]:
+        _SYNC_PENDING = True
         return
     _SYNC_STATUS["is_syncing"] = True
-    _SYNC_STATUS["status"] = "Syncing with Google Sheets & Drive..."
-    _SYNC_STATUS["message"] = "Fetching latest campaigns and customer files..."
     try:
-        print("[SYNC] Triggering automated sync cycle...")
-        _sync_campaign_master()
-        
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        root_dir = os.path.dirname(base_dir)
-        
-        # Step 1: Download any new customer files from Google Drive
-        _SYNC_STATUS["message"] = "Downloading customer files from Google Drive..."
-        try:
-            subprocess.run([sys.executable, os.path.join(base_dir, "directsync.py")], cwd=root_dir, timeout=1200, check=False)
-        except Exception as e_ds:
-            print(f"[SYNC WARNING] directsync error: {e_ds}")
+        while True:
+            _SYNC_PENDING = False
+            _SYNC_STATUS["status"] = "Syncing with Google Sheets & Drive..."
+            _SYNC_STATUS["message"] = "Fetching latest campaigns and customer files..."
+            print("[SYNC] Triggering automated sync cycle...")
+            _sync_campaign_master()
             
-        # Step 2: Calculate KPIs and attribution (always runs!)
-        _SYNC_STATUS["message"] = "Calculating incremental lift and KPIs..."
-        try:
-            subprocess.run([sys.executable, os.path.join(base_dir, "fixkpi.py")], cwd=root_dir, timeout=600, check=False)
-        except Exception as e_kpi:
-            print(f"[SYNC WARNING] fixkpi error: {e_kpi}")
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            root_dir = os.path.dirname(base_dir)
             
-        _SYNC_STATUS["last_sync"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        _SYNC_STATUS["status"] = "Success"
-        _SYNC_STATUS["message"] = "Google Sheets & Google Drive synced successfully"
-        print("[SYNC] Completed sync cycle.")
+            # Step 1: Download any new customer files from Google Drive
+            _SYNC_STATUS["message"] = "Downloading customer files from Google Drive..."
+            try:
+                subprocess.run([sys.executable, os.path.join(base_dir, "directsync.py")], cwd=root_dir, timeout=1200, check=False)
+            except Exception as e_ds:
+                print(f"[SYNC WARNING] directsync error: {e_ds}")
+                
+            # Step 2: Calculate KPIs and attribution (always runs!)
+            _SYNC_STATUS["message"] = "Calculating incremental lift and KPIs..."
+            try:
+                subprocess.run([sys.executable, os.path.join(base_dir, "fixkpi.py")], cwd=root_dir, timeout=600, check=False)
+            except Exception as e_kpi:
+                print(f"[SYNC WARNING] fixkpi error: {e_kpi}")
+                
+            _SYNC_STATUS["last_sync"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            _SYNC_STATUS["sync_seq"] = int(_SYNC_STATUS.get("sync_seq") or 0) + 1
+            _SYNC_STATUS["status"] = "Success"
+            _SYNC_STATUS["message"] = "Google Sheets & Google Drive synced successfully"
+            print("[SYNC] Completed sync cycle.")
+            if not _SYNC_PENDING:
+                break
+            print("[SYNC] Running queued follow-up sync immediately...")
     except Exception as e:
         _SYNC_STATUS["status"] = "Error"
         _SYNC_STATUS["message"] = str(e)
@@ -1638,17 +1676,19 @@ def background_sync_worker():
         try:
             print("[BACKGROUND SYNC] Starting automated sync cycle...")
             run_sync_cycle()
-            print("[BACKGROUND SYNC] Automated sync cycle completed. Sleeping for 45 seconds.")
+            print("[BACKGROUND SYNC] Automated sync cycle completed. Sleeping for 20 seconds.")
         except Exception as e:
             print(f"[BACKGROUND SYNC ERROR] {e}")
-        time.sleep(45)
+        time.sleep(20)
 
 @app.route('/api/sync', method=['POST', 'GET', 'OPTIONS'])
 def api_sync():
+    global _SYNC_PENDING
     if request.method == 'OPTIONS':
         return response
     if _SYNC_STATUS["is_syncing"]:
-        return {"status": "already_syncing", "message": "Sync is already in progress"}
+        _SYNC_PENDING = True
+        return {"status": "queued", "message": "Sync in progress — queued immediate follow-up sync"}
     threading.Thread(target=run_sync_cycle, daemon=True).start()
     return {"status": "started", "message": "Sync started in background"}
 
