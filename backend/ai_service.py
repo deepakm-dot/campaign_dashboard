@@ -821,10 +821,10 @@ def answer_with_nlp(question):
         product, item_term, display_name, brand = 'MOBILE', None, 'Galaxy', 'SAMSUNG'
     target_branch_code, target_branch_name = extract_branch(question)
 
-    is_qty_query = any(k in q_low for k in [
-        'how many', 'quantity', 'units', 'volume', 'qty', 'count',
-        'number of', 'how much unit', 'in terms of quantity', 'how much piece'
-    ])
+    is_qty_query = bool(re.search(
+        r'\b(how\s+many|quantity|units?|volume|qty|count|number\s+of|how\s+much\s+(?:units?|pieces?)|in\s+terms\s+of\s+(?:quantity|units?))\b',
+        q_low
+    ))
 
     is_compare = any(k in q_low for k in [
         'compare', 'comparison', 'previous year', 'last year', 'same date of previous year',
@@ -869,11 +869,11 @@ def answer_with_nlp(question):
             prev_date_filter = f"toDate(s.date) = '{prev_start_date}'" if prev_start_date == prev_end_date else f"toDate(s.date) >= '{prev_start_date}' AND toDate(s.date) <= '{prev_end_date}'"
         except Exception as e:
             print(f"[YoY Date Parse Error] {e}")
-    # Direction: Least / Worst / Bottom vs Top / Best / Most
-    is_least = any(k in q_low for k in [
-        'least', 'lowest', 'worst', 'bottom', 'minimum', 'min', 'slowest',
-        'underperformed', 'underperforming', 'poorest', 'poor'
-    ])
+    # Direction: Least / Worst / Bottom vs Top / Best / Most (strict word boundaries so 'performing' never matches 'min')
+    is_least = bool(re.search(
+        r'\b(least|lowest|worst|bottom|minimum|min|slowest|underperform\w*|poorest|poor)\b',
+        q_low
+    ))
     
     # Extract explicit limit if specified (e.g. "5 future stores", "least 5 performing future stores", "top 3", "least 10")
     m_lim = re.search(r'\b(?:top|least|bottom|lowest|first|best|worst)?\s*(\d{1,2})\s*(?:(?:least|top|best|worst|lowest|highest)\s+)?(?:perform\w*\s+)?(?:future\s+|care\s+|normal\s+|myg\s+)?(?:stores?|branches?|products?|items?|campaigns?|brands?)\b', q_low)
@@ -884,8 +884,8 @@ def answer_with_nlp(question):
     if limit > 50: limit = 50
 
     # 1. CAMPAIGN QUERIES
-    if any(k in q_low for k in ['campaign', 'campaigns', 'group', 'roi', 'attribution', 'channel']):
-        if any(k in q_low for k in ['top', 'best', 'highest', 'least', 'lowest', 'worst', 'bottom']) or is_least:
+    if re.search(r'\b(campaigns?|campaign\s+groups?|roi|attribution|channels?)\b', q_low):
+        if re.search(r'\b(top|best|highest|least|lowest|worst|bottom)\b', q_low) or is_least:
             order_clause = "ORDER BY purchase_value ASC" if is_least else "ORDER BY purchase_value DESC"
             rank_label = "lowest performing campaign" if is_least else "top performing campaign"
             card_color = "#ef4444" if is_least else "#4f46e5"
@@ -1608,13 +1608,13 @@ def answer_with_nlp(question):
         )"""
         store_type_filter = ""
         store_type_desc = "branches"
-        if 'future' in q_low:
+        if re.search(r'\bfuture\b', q_low):
             store_type_filter = f"AND upper({branch_name_expr}) LIKE '%FUTURE%'"
             store_type_desc = "Future stores"
-        elif 'care' in q_low:
+        elif re.search(r'\bcare\b', q_low):
             store_type_filter = f"AND upper({branch_name_expr}) LIKE '%CARE%'"
             store_type_desc = "Care stores"
-        elif 'normal' in q_low:
+        elif re.search(r'\bnormal\b', q_low):
             store_type_filter = f"AND upper({branch_name_expr}) NOT LIKE '%FUTURE%' AND upper({branch_name_expr}) NOT LIKE '%CARE%'"
             store_type_desc = "Normal stores"
 
