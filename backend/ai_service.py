@@ -290,7 +290,7 @@ _EXCL_CATS = ("'SCHEME','AC OUTDOOR','D SPARE','SPARE','GDP-SPARE','FIXED ASSETS
               "'CARE PLUS','LG AMC','GDOT CARE','TOTAL SECURITY','MOBILE ANTIVIRUS','CEGI','SMART CHOICE'")
 
 PROD_EXPR = ("if(coalesce(im.product,'')='', multiIf(s.item_code LIKE 'MOB%','MOBILE', s.item_code LIKE 'TV%','TV', "
-             "s.item_code LIKE 'LAP%','LAPTOP', s.item_code LIKE 'AC%','AIR CONDITIONER', s.item_code LIKE 'WM%','WASHING MACHINES', "
+             "s.item_code LIKE 'LAP%','LAPTOP', (s.item_code LIKE 'AC%' AND abs(toFloat64(s.sold_price))>=1000),'AIR CONDITIONER', (s.item_code LIKE 'WSM%' OR s.item_code LIKE 'WM%'),'WASHING MACHINES', "
              "s.item_code LIKE 'REF%','REFRIGERATORS',''), im.product)")
 
 # Only these product categories are considered in quarterly/period comparisons and insights
@@ -1185,7 +1185,7 @@ def answer_with_nlp(question):
             elif product == 'REFRIGERATORS':
                 item_cond = "(upper(im.product) IN ('REFRIGERATORS', 'FREEZER') OR s.item_code LIKE 'REF%') AND coalesce(im.product, '') NOT IN ('SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
             elif product == 'WASHING MACHINES':
-                item_cond = "(upper(im.product) = 'WASHING MACHINES' OR s.item_code LIKE 'WM%') AND coalesce(im.product, '') NOT IN ('SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+                item_cond = "(upper(im.product) = 'WASHING MACHINES' OR s.item_code LIKE 'WSM%' OR s.item_code LIKE 'WM%') AND coalesce(im.product, '') NOT IN ('SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
             elif product == 'TABLET':
                 item_cond = "(upper(im.product) = 'TABLET' OR s.item_code LIKE 'TAB%') AND coalesce(im.product, '') NOT IN ('SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
             elif product == 'SMART WATCH':
@@ -1289,7 +1289,7 @@ def answer_with_nlp(question):
         top_brand_txt = ""
         if not brand:
             b_sql = f"""
-                SELECT coalesce(im.brand, 'Other') as brand,
+                SELECT coalesce(nullIf(trim(im.brand), ''), 'Unmapped POS SKU') as brand,
                        sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
                        sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue
                 FROM azure_sales_report s
@@ -1418,7 +1418,7 @@ def answer_with_nlp(question):
 
         # Query top product categories for this store on this date
         p_sql = f"""
-            SELECT coalesce(im.product, 'Other') as product,
+            SELECT if({PROD_EXPR} = '', 'Other', {PROD_EXPR}) as product,
                    sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
                    round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue
             FROM azure_sales_report s
@@ -1467,7 +1467,7 @@ def answer_with_nlp(question):
         card_color = "#ef4444" if is_least else "#4f46e5"
 
         sql = f"""
-            SELECT coalesce(im.product, 'Other') as product,
+            SELECT if({PROD_EXPR} = '', 'Other', {PROD_EXPR}) as product,
                    sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
                    sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units
             FROM azure_sales_report s
@@ -1639,7 +1639,7 @@ def answer_with_nlp(question):
 
         # Get top product on this date for added insight
         p_sql = f"""
-            SELECT coalesce(im.product, 'Other') as product,
+            SELECT if({PROD_EXPR} = '', 'Other', {PROD_EXPR}) as product,
                    sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue
             FROM azure_sales_report s
             LEFT JOIN item_master im ON im.item_code = s.item_code

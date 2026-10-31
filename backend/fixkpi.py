@@ -338,26 +338,40 @@ for camp in camps:
         if "mavoor road" in camp_name.lower():
             b_cond_ch = "AND s.branch IN ('KIN', 'LAN', 'MAH', 'PCT', 'PUT', 'SBM', 'CAM')"
         
+        eff_prod = """if(
+            coalesce(im.product, '') != '',
+            im.product,
+            multiIf(
+                regexpExtract(s.item_code, '^[A-Z]+', 0) = 'TV', 'TV',
+                regexpExtract(s.item_code, '^[A-Z]+', 0) IN ('WSM', 'WM'), 'WASHING MACHINES',
+                regexpExtract(s.item_code, '^[A-Z]+', 0) = 'REF', 'REFRIGERATORS',
+                regexpExtract(s.item_code, '^[A-Z]+', 0) = 'MOB', 'MOBILE',
+                regexpExtract(s.item_code, '^[A-Z]+', 0) = 'LAP', 'LAPTOP',
+                regexpExtract(s.item_code, '^[A-Z]+', 0) = 'AC' AND abs(toFloat64(s.sold_price)) >= 1000, 'AIR CONDITIONER',
+                regexpExtract(s.item_code, '^[A-Z]+', 0) = 'AC' AND abs(toFloat64(s.sold_price)) < 10, 'AC OUTDOOR',
+                'Unknown'
+            )
+        )"""
         b_sql = f"""
         SELECT coalesce(nullIf(trim(im.brand), ''), 'Unknown') AS brand,
                SUM(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
                SUM(if(toFloat64(s.sold_price) < 0, -toInt64(s.qty), toInt64(s.qty))) as qty
         FROM azure_sales_report s
-        JOIN item_master im ON s.item_code = im.item_code
+        LEFT JOIN item_master im ON s.item_code = im.item_code
         WHERE {inv_filter} {b_cond_ch}
-          AND im.product != 'AC OUTDOOR' AND im.product != 'SCHEME'
+          AND ({eff_prod}) != 'AC OUTDOOR' AND ({eff_prod}) != 'SCHEME'
         GROUP BY brand ORDER BY revenue DESC LIMIT 5
         """
         top_brands = [{'brand': r.get('brand',''), 'revenue': float(r.get('revenue',0)), 'qty': int(r.get('qty',0))} for r in query_clickhouse(b_sql)]
 
         c_sql = f"""
-        SELECT coalesce(nullIf(trim(im.product), ''), 'Unknown') AS category,
+        SELECT ({eff_prod}) AS category,
                SUM(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
                SUM(if(toFloat64(s.sold_price) < 0, -toInt64(s.qty), toInt64(s.qty))) as qty
         FROM azure_sales_report s
-        JOIN item_master im ON s.item_code = im.item_code
+        LEFT JOIN item_master im ON s.item_code = im.item_code
         WHERE {inv_filter} {b_cond_ch}
-          AND im.product != 'AC OUTDOOR' AND im.product != 'SCHEME'
+          AND ({eff_prod}) != 'AC OUTDOOR' AND ({eff_prod}) != 'SCHEME'
         GROUP BY category ORDER BY revenue DESC LIMIT 5
         """
         top_cats = [{'category': r.get('category',''), 'revenue': float(r.get('revenue',0)), 'qty': int(r.get('qty',0))} for r in query_clickhouse(c_sql)]

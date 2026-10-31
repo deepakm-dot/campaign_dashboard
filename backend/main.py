@@ -994,16 +994,32 @@ def get_campaign_store_sales(campaign_id):
                 branch_cond_full = "azure_sales_report.branch IN ('KIN', 'LAN', 'MAH', 'PCT', 'PUT', 'SBM', 'CAM')"
                 display_name = "Mavoor Road (Group of Stores)"
 
-        # READ-ONLY ClickHouse query — matching POS Daily Sales Report (futurepos.mygoal.biz):
+        # READ-ONLY ClickHouse query — matching POS Daily Sales Report & Combined Sales Report:
+        # Newly created POS item_codes not yet synced into ClickHouse item_master (im.product = '')
+        # fall back to standardized MyG POS SKU prefixes (MOB, TV, WSM/WM, REF, LAP, AC).
+        eff_prod = """if(
+            coalesce(im.product, '') != '',
+            im.product,
+            multiIf(
+                regexpExtract(s.item_code, '^[A-Z]+', 0) = 'TV', 'TV',
+                regexpExtract(s.item_code, '^[A-Z]+', 0) IN ('WSM', 'WM'), 'WASHING MACHINES',
+                regexpExtract(s.item_code, '^[A-Z]+', 0) = 'REF', 'REFRIGERATORS',
+                regexpExtract(s.item_code, '^[A-Z]+', 0) = 'MOB', 'MOBILE',
+                regexpExtract(s.item_code, '^[A-Z]+', 0) = 'LAP', 'LAPTOP',
+                regexpExtract(s.item_code, '^[A-Z]+', 0) = 'AC' AND abs(toFloat64(s.sold_price)) >= 1000, 'AIR CONDITIONER',
+                regexpExtract(s.item_code, '^[A-Z]+', 0) = 'AC' AND abs(toFloat64(s.sold_price)) < 10, 'AC OUTDOOR',
+                ''
+            )
+        )"""
         sql = f"""
             SELECT
                 multiIf(
-                    im.product = 'TV', 'TV',
-                    im.product = 'WASHING MACHINES', 'Washing machine',
-                    im.product = 'REFRIGERATORS', 'Referigerator',
-                    im.product = 'MOBILE', 'Mobile',
-                    im.product = 'LAPTOP', 'Laptop',
-                    im.product = 'AIR CONDITIONER', 'AC',
+                    ({eff_prod}) = 'TV', 'TV',
+                    ({eff_prod}) = 'WASHING MACHINES', 'Washing machine',
+                    ({eff_prod}) = 'REFRIGERATORS', 'Referigerator',
+                    ({eff_prod}) = 'MOBILE', 'Mobile',
+                    ({eff_prod}) = 'LAPTOP', 'Laptop',
+                    ({eff_prod}) = 'AIR CONDITIONER', 'AC',
                     'Other'
                 ) AS product_type,
                 SUM(if(toFloat64(s.sold_price) > 0, toInt64(s.qty), 0)) AS paid_qty,
@@ -1017,10 +1033,10 @@ def get_campaign_store_sales(campaign_id):
               AND toDate(s.date) <= '{end_date}'
               AND {branch_cond_s}
               -- CRITICAL RULE: NEVER count 'ac outdoor' or 'SCHEME' (internal vouchers)
-              AND im.product != 'AC OUTDOOR'
-              AND lower(im.item_category) != 'ac outdoor'
-              AND lower(im.item_name) NOT LIKE 'o/d%'
-              AND coalesce(im.product, '') != 'SCHEME'
+              AND ({eff_prod}) != 'AC OUTDOOR'
+              AND lower(coalesce(im.item_category, '')) != 'ac outdoor'
+              AND lower(coalesce(im.item_name, '')) NOT LIKE 'o/d%'
+              AND ({eff_prod}) != 'SCHEME'
               AND coalesce(im.item_group, '') != 'SCHEME'
             GROUP BY product_type
             ORDER BY revenue DESC
@@ -1199,102 +1215,39 @@ def get_brand_breakdown(campaign_id):
         if "mavoor road" in camp.get('campaign_name', '').lower():
             branch_cond_s = "s.branch IN ('KIN', 'LAN', 'MAH', 'PCT', 'PUT', 'SBM', 'CAM')"
 
-    # Build WHERE clause for the chosen product category (mirrors the multiIf logic)
+    # Build WHERE clause for the chosen product category (mirrors get_campaign_store_sales multiIf + SKU prefix fallback)
+    eff_prod = """if(
+        coalesce(im.product, '') != '',
+        im.product,
+        multiIf(
+            regexpExtract(s.item_code, '^[A-Z]+', 0) = 'TV', 'TV',
+            regexpExtract(s.item_code, '^[A-Z]+', 0) IN ('WSM', 'WM'), 'WASHING MACHINES',
+            regexpExtract(s.item_code, '^[A-Z]+', 0) = 'REF', 'REFRIGERATORS',
+            regexpExtract(s.item_code, '^[A-Z]+', 0) = 'MOB', 'MOBILE',
+            regexpExtract(s.item_code, '^[A-Z]+', 0) = 'LAP', 'LAPTOP',
+            regexpExtract(s.item_code, '^[A-Z]+', 0) = 'AC' AND abs(toFloat64(s.sold_price)) >= 1000, 'AIR CONDITIONER',
+            regexpExtract(s.item_code, '^[A-Z]+', 0) = 'AC' AND abs(toFloat64(s.sold_price)) < 10, 'AC OUTDOOR',
+            ''
+        )
+    )"""
     PRODUCT_FILTERS = {
-        'TV': """(im.product = 'TV'
-            OR lower(im.item_category) IN ('tv', 'tv 18 %', 'tv 28 %', 'signage tv')
-            OR (lower(im.item_category) LIKE '%tv%' AND lower(im.item_category) NOT LIKE '%stick%' AND lower(im.item_category) NOT LIKE '%stand%' AND lower(im.item_category) NOT LIKE '%frame%' AND lower(im.item_category) NOT LIKE '%access%')
-            OR lower(im.item_category) LIKE '%television%')""",
-
-        'WASHING MACHINE': """(im.product = 'WASHING MACHINES'
-            OR lower(im.item_category) LIKE '%washing machine%'
-            OR lower(im.item_category) = 'wm'
-            OR lower(im.item_category) LIKE 'wm %'
-            OR lower(im.item_category) LIKE '% washer%'
-            OR lower(im.item_category) = 'washer'
-            OR lower(im.item_category) LIKE '%washer dryer%')
-            AND lower(im.item_category) NOT LIKE '%cover%'
-            AND lower(im.item_category) NOT LIKE '%dish%'
-            AND lower(im.item_category) NOT LIKE '%pressure%'""",
-        'WASHING MACHINES': """(im.product = 'WASHING MACHINES'
-            OR lower(im.item_category) LIKE '%washing machine%'
-            OR lower(im.item_category) = 'wm'
-            OR lower(im.item_category) LIKE 'wm %'
-            OR lower(im.item_category) LIKE '% washer%'
-            OR lower(im.item_category) = 'washer'
-            OR lower(im.item_category) LIKE '%washer dryer%')
-            AND lower(im.item_category) NOT LIKE '%cover%'
-            AND lower(im.item_category) NOT LIKE '%dish%'
-            AND lower(im.item_category) NOT LIKE '%pressure%'""",
-
-        'REFERIGERATOR': """(im.product = 'REFRIGERATORS'
-            OR lower(im.item_category) LIKE '%refrigerator%'
-            OR lower(im.item_category) LIKE '%fridge%'
-            OR lower(im.item_category) = 'ref'
-            OR lower(im.item_category) LIKE 'ref %'
-            OR lower(im.item_category) LIKE '% ref')
-            AND lower(im.item_category) NOT LIKE '%stand%'""",
-        'REFRIGERATOR': """(im.product = 'REFRIGERATORS'
-            OR lower(im.item_category) LIKE '%refrigerator%'
-            OR lower(im.item_category) LIKE '%fridge%'
-            OR lower(im.item_category) = 'ref'
-            OR lower(im.item_category) LIKE 'ref %'
-            OR lower(im.item_category) LIKE '% ref')
-            AND lower(im.item_category) NOT LIKE '%stand%'""",
-        'REFRIGERATORS': """(im.product = 'REFRIGERATORS'
-            OR lower(im.item_category) LIKE '%refrigerator%'
-            OR lower(im.item_category) LIKE '%fridge%'
-            OR lower(im.item_category) = 'ref'
-            OR lower(im.item_category) LIKE 'ref %'
-            OR lower(im.item_category) LIKE '% ref')
-            AND lower(im.item_category) NOT LIKE '%stand%'""",
-
-        'MOBILE': """(im.product = 'MOBILE'
-            OR (lower(im.item_category) IN ('mobile', 'mobiles', 'mobile smart phone', 'mobile feature phone', 'mobile gsm phone')
-                AND coalesce(im.category, '') = 'TELECOM'))""",
-        'MOBILES': """(im.product = 'MOBILE'
-            OR (lower(im.item_category) IN ('mobile', 'mobiles', 'mobile smart phone', 'mobile feature phone', 'mobile gsm phone')
-                AND coalesce(im.category, '') = 'TELECOM'))""",
-
-        'LAPTOP': """(im.product = 'LAPTOP'
-            OR (lower(im.item_category) IN ('laptop', 'notebook') AND im.product != 'D SPARE'))""",
-        'LAPTOPS': """(im.product = 'LAPTOP'
-            OR (lower(im.item_category) IN ('laptop', 'notebook') AND im.product != 'D SPARE'))""",
-
-        'AC': """(im.product = 'AIR CONDITIONER'
-            OR lower(im.item_category) IN ('ac indoor', 'air conditioner', 'inverter ac', 'tower ac')
-            OR lower(im.item_category) LIKE '%ac indoor%'
-            OR (lower(im.item_category) LIKE '%air condition%' AND lower(im.item_category) NOT LIKE '%outdoor%'))
-            AND im.product != 'AC OUTDOOR'
-            AND lower(im.item_category) NOT LIKE '%outdoor%'
-            AND lower(im.item_name) NOT LIKE 'o/d%'
-            AND lower(im.item_category) NOT LIKE '%access%'
-            AND lower(im.item_category) NOT LIKE '%bracket%'
-            AND lower(im.item_category) NOT LIKE '%dummy%'""",
-        'AIR CONDITIONER': """(im.product = 'AIR CONDITIONER'
-            OR lower(im.item_category) IN ('ac indoor', 'air conditioner', 'inverter ac', 'tower ac')
-            OR lower(im.item_category) LIKE '%ac indoor%'
-            OR (lower(im.item_category) LIKE '%air condition%' AND lower(im.item_category) NOT LIKE '%outdoor%'))
-            AND im.product != 'AC OUTDOOR'
-            AND lower(im.item_category) NOT LIKE '%outdoor%'
-            AND lower(im.item_name) NOT LIKE 'o/d%'
-            AND lower(im.item_category) NOT LIKE '%access%'
-            AND lower(im.item_category) NOT LIKE '%bracket%'
-            AND lower(im.item_category) NOT LIKE '%dummy%'""",
+        'TV': f"({eff_prod}) = 'TV'",
+        'WASHING MACHINE': f"({eff_prod}) = 'WASHING MACHINES'",
+        'WASHING MACHINES': f"({eff_prod}) = 'WASHING MACHINES'",
+        'REFERIGERATOR': f"({eff_prod}) = 'REFRIGERATORS'",
+        'REFRIGERATOR': f"({eff_prod}) = 'REFRIGERATORS'",
+        'REFRIGERATORS': f"({eff_prod}) = 'REFRIGERATORS'",
+        'MOBILE': f"({eff_prod}) = 'MOBILE'",
+        'MOBILES': f"({eff_prod}) = 'MOBILE'",
+        'LAPTOP': f"({eff_prod}) = 'LAPTOP'",
+        'LAPTOPS': f"({eff_prod}) = 'LAPTOP'",
+        'AC': f"({eff_prod}) = 'AIR CONDITIONER'",
+        'AIR CONDITIONER': f"({eff_prod}) = 'AIR CONDITIONER'",
     }
 
     product_filter = PRODUCT_FILTERS.get(norm_product)
     if not product_filter:
-        # "Other" — everything NOT in any named category
-        product_filter = """NOT (
-            im.product IN ('TV','WASHING MACHINES','REFRIGERATORS','MOBILE','LAPTOP','AIR CONDITIONER')
-            OR lower(im.item_category) IN ('tv','tv 18 %','tv 28 %','signage tv','wm','washer','ref','mobile','mobiles','mobile smart phone','mobile feature phone','mobile gsm phone','laptop','notebook','ac indoor','air conditioner','inverter ac','tower ac')
-            OR lower(im.item_category) LIKE '%television%'
-            OR lower(im.item_category) LIKE '%washing machine%'
-            OR lower(im.item_category) LIKE '%refrigerator%'
-            OR lower(im.item_category) LIKE '%fridge%'
-            OR lower(im.item_category) LIKE '%air condition%'
-        )"""
+        product_filter = f"({eff_prod}) NOT IN ('TV','WASHING MACHINES','REFRIGERATORS','MOBILE','LAPTOP','AIR CONDITIONER','AC OUTDOOR','SCHEME')" 
 
     sql = f"""
         SELECT
@@ -1306,9 +1259,9 @@ def get_brand_breakdown(campaign_id):
         WHERE toDate(s.date) >= '{start_date}'
           AND toDate(s.date) <= '{end_date}'
           AND {branch_cond_s}
-          AND im.product != 'AC OUTDOOR'
-          AND lower(im.item_category) != 'ac outdoor'
-          AND lower(im.item_name) NOT LIKE 'o/d%'
+          AND ({eff_prod}) != 'AC OUTDOOR'
+          AND lower(coalesce(im.item_category, '')) != 'ac outdoor'
+          AND lower(coalesce(im.item_name, '')) NOT LIKE 'o/d%'
           AND coalesce(im.product, '') != 'SCHEME'
           AND coalesce(im.item_group, '') != 'SCHEME'
           AND ({product_filter})
