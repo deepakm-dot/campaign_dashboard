@@ -87,10 +87,38 @@
 
     /* CARDS */
     .card { background:var(--card); border:1px solid var(--border); border-radius:14px; overflow:hidden; box-shadow:var(--shadow); }
+    .card.card-trend { display:flex; flex-direction:column; overflow:visible; }
+    .card.card-trend .card-body { flex:1; display:flex; flex-direction:column; padding:18px 22px 16px; }
     .card-header { padding:20px 24px 16px; border-bottom:1px solid var(--border); }
     .card-title { font-size:14px; font-weight:700; color:var(--text); }
     .card-sub { font-size:11px; color:var(--muted); margin-top:3px; }
     .card-body { padding:20px 24px; }
+    .trend-header-row { display:flex; align-items:center; gap:9px; position:relative; }
+    .trend-info-wrap { position:relative; display:inline-flex; align-items:center; flex-shrink:0; }
+    .trend-info-btn {
+      width:21px; height:21px; border-radius:50%; background:#d1d5db; color:#1e293b;
+      font-size:12px; font-weight:700; font-family:Georgia, 'Inter', serif;
+      display:inline-flex; align-items:center; justify-content:center;
+      border:none; cursor:pointer; line-height:1; transition:background 0.15s, color 0.15s;
+    }
+    .trend-info-btn:hover, .trend-info-btn:focus-visible { background:#94a3b8; color:#0f172a; outline:none; }
+    .trend-info-popover {
+      position:absolute; top:calc(100% + 10px); left:-6px; width:268px; z-index:30;
+      background:#ffffff; color:#334155; font-size:12px; font-weight:500; line-height:1.45;
+      padding:12px 14px; border-radius:10px; border:1px solid rgba(15,23,42,0.07);
+      box-shadow:0 8px 24px rgba(15,23,42,0.12), 0 2px 6px rgba(15,23,42,0.06);
+      opacity:0; visibility:hidden; transform:translateY(-4px); pointer-events:none;
+      transition:opacity 0.18s ease, transform 0.18s ease, visibility 0.18s;
+    }
+    .trend-info-popover::before {
+      content:''; position:absolute; top:-6px; left:11px; width:10px; height:10px;
+      background:#ffffff; border-left:1px solid rgba(15,23,42,0.07); border-top:1px solid rgba(15,23,42,0.07);
+      transform:rotate(45deg);
+    }
+    .trend-info-wrap:hover .trend-info-popover,
+    .trend-info-wrap:focus-within .trend-info-popover {
+      opacity:1; visibility:visible; transform:translateY(0);
+    }
 
     /* CHART ROWS */
     .row2 { display:grid; grid-template-columns:1fr 360px; gap:16px; margin-bottom:24px; }
@@ -1051,8 +1079,17 @@
 
       <div class="charts-row-3 fu fu2">
         <div class="card card-trend">
-          <div class="card-header"><div class="card-title">Revenue Trend</div><div class="card-sub">Monthly sales value from campaign customers</div></div>
-          <div class="card-body"><div style="height:220px;position:relative;"><canvas id="trendChart"></canvas></div></div>
+          <div class="card-header">
+            <div class="trend-header-row">
+              <div class="trend-info-wrap">
+                <button type="button" class="trend-info-btn" aria-label="About monthly revenue chart">i</button>
+                <div class="trend-info-popover">Total monthly revenue generated from targeted campaign customers, verified via ClickHouse POS invoices.</div>
+              </div>
+              <div class="card-title" style="font-size:14.5px;font-weight:600;color:#334155;">Total revenue per month [&#x20B9;]</div>
+            </div>
+            <div class="card-sub" style="padding-left:30px;">Monthly sales value from campaign customers</div>
+          </div>
+          <div class="card-body"><div style="flex:1;min-height:260px;position:relative;"><canvas id="trendChart"></canvas></div></div>
         </div>
         <div class="card">
           <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; padding:16px 20px; flex-wrap:wrap; gap:8px;">
@@ -1532,26 +1569,165 @@ function onTopMonthChange() {
   buildTopTable();
 }
 
-/* ---- TREND CHART ---- */
+/* ---- TREND CHART (Month-Wise Multi-Color Rounded Bar Chart) ---- */
+const TREND_BAR_PALETTE = [
+  { bg: '#332cf2', hover: '#251ee0', text: '#ffffff' },
+  { bg: '#887cf8', hover: '#7466f5', text: '#2d3748' },
+  { bg: '#dcd8fe', hover: '#cbc5fc', text: '#334155' },
+  { bg: '#b026b8', hover: '#991da1', text: '#ffffff' },
+  { bg: '#c66cd6', hover: '#b754c9', text: '#2d3748' },
+  { bg: '#eed6f3', hover: '#e4c2eb', text: '#334155' },
+  { bg: '#ebc038', hover: '#deb122', text: '#2d3748' },
+  { bg: '#f3dc7b', hover: '#ebd05c', text: '#334155' }
+];
+
+function inrBarCompact(v) {
+  v = Number(v) || 0;
+  if (v >= 1e7) return '₹' + (v / 1e7).toFixed(1).replace(/\.0$/, '') + 'Cr';
+  if (v >= 1e5) return '₹' + (v / 1e5).toFixed(1).replace(/\.0$/, '') + 'L';
+  if (v >= 1e3) return '₹' + (v / 1e3).toFixed(1).replace(/\.0$/, '') + 'K';
+  return '₹' + Math.round(v);
+}
+
+function inrAxisTick(v) {
+  v = Number(v) || 0;
+  if (v === 0) return '₹0';
+  if (v >= 1e7) {
+    const cr = v / 1e7;
+    return '₹' + (Number.isInteger(cr) ? cr.toFixed(0) : cr.toFixed(1).replace(/\.0$/, '')) + 'Cr';
+  }
+  if (v >= 1e5) {
+    const l = v / 1e5;
+    return '₹' + (Number.isInteger(l) ? l.toFixed(0) : l.toFixed(1).replace(/\.0$/, '')) + 'L';
+  }
+  if (v >= 1e3) return '₹' + (v / 1e3).toFixed(0) + 'K';
+  return '₹' + Math.round(v);
+}
+
+function parseTrendMonth(dateStr, full = false) {
+  const SHORT_M = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const FULL_M  = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const parts = String(dateStr || '').split('-');
+  if (parts.length >= 2) {
+    const y = parts[0];
+    const mIdx = parseInt(parts[1], 10) - 1;
+    if (mIdx >= 0 && mIdx < 12) {
+      return (full ? FULL_M[mIdx] : SHORT_M[mIdx]) + ' ' + y;
+    }
+  }
+  const dt = new Date(dateStr);
+  return dt.toLocaleDateString('en-IN', { month: full ? 'long' : 'short', year: 'numeric' });
+}
+
 function buildTrend(trend){
-  const labels = trend.map(d => {
-    const dt=new Date(d.date);
-    return dt.toLocaleDateString('en-IN',{month:'short', year:'numeric'});
-  });
-  const vals = trend.map(d=>Number(d.sales_value)||0);
-  const ctx = document.getElementById('trendChart').getContext('2d');
-  const grad = ctx.createLinearGradient(0,0,0,220);
-  grad.addColorStop(0,'rgba(99,102,241,0.28)');
-  grad.addColorStop(1,'rgba(99,102,241,0)');
-  mkChart('trendChart',{
-    type:'line',
-    data:{ labels, datasets:[{ data:vals, fill:true, backgroundColor:grad, borderColor:'#6366f1', borderWidth:2.5, tension:0.4, pointBackgroundColor:'#6366f1', pointRadius:4, pointHoverRadius:7 }] },
-    options:{
-      responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{display:false}, tooltip:{ backgroundColor:'#ffffff', titleColor:'#0f172a', bodyColor:'#64748b', borderColor:'#e2e8f0', borderWidth:1, boxShadow:'0 4px 20px rgba(0,0,0,0.12)', callbacks:{label: c=>' '+inr(c.raw)} } },
-      scales:{
-        x:{ grid:{color:'rgba(0,0,0,0.04)'}, ticks:{color:'#64748b',font:{size:11}} },
-        y:{ grid:{color:'rgba(0,0,0,0.04)'}, ticks:{color:'#64748b',font:{size:11}, callback:v=>inr(v)} }
+  const items = Array.isArray(trend) ? trend : [];
+  const labels = items.map(d => parseTrendMonth(d.date, false));
+  const fullLabels = items.map(d => parseTrendMonth(d.date, true));
+  const vals = items.map(d => Number(d.sales_value) || 0);
+  const bgColors = items.map((_, i) => TREND_BAR_PALETTE[i % TREND_BAR_PALETTE.length].bg);
+  const hoverColors = items.map((_, i) => TREND_BAR_PALETTE[i % TREND_BAR_PALETTE.length].hover);
+  const labelColors = items.map((_, i) => TREND_BAR_PALETTE[i % TREND_BAR_PALETTE.length].text);
+
+  const inBarValuePlugin = {
+    id: 'inBarValuePlugin',
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      const meta = chart.getDatasetMeta(0);
+      if (!meta || !meta.data) return;
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = '600 12px Inter, sans-serif';
+
+      meta.data.forEach((bar, idx) => {
+        const val = vals[idx];
+        if (!val || val <= 0) return;
+        const barHeight = Math.abs((bar.base || 0) - (bar.y || 0));
+        const txt = inrBarCompact(val);
+        if (barHeight >= 30) {
+          ctx.fillStyle = labelColors[idx] || '#ffffff';
+          ctx.textBaseline = 'top';
+          ctx.fillText(txt, bar.x, bar.y + 12);
+        } else {
+          ctx.fillStyle = '#334155';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText(txt, bar.x, bar.y - 6);
+        }
+      });
+      ctx.restore();
+    }
+  };
+
+  mkChart('trendChart', {
+    type: 'bar',
+    plugins: [inBarValuePlugin],
+    data: {
+      labels,
+      datasets: [{
+        data: vals,
+        backgroundColor: bgColors,
+        hoverBackgroundColor: hoverColors,
+        borderWidth: 0,
+        borderRadius: { topLeft: 10, topRight: 10, bottomLeft: 0, bottomRight: 0 },
+        borderSkipped: 'bottom',
+        maxBarThickness: 84,
+        categoryPercentage: 0.74,
+        barPercentage: 0.86
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      layout: { padding: { top: 8, right: 6, left: 0, bottom: 0 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#ffffff',
+          titleColor: '#0f172a',
+          bodyColor: '#475569',
+          borderColor: '#e2e8f0',
+          borderWidth: 1,
+          padding: 12,
+          displayColors: true,
+          callbacks: {
+            title: (itemsCtx) => {
+              const idx = itemsCtx[0]?.dataIndex ?? 0;
+              return fullLabels[idx] || itemsCtx[0]?.label || '';
+            },
+            label: (c) => ' Revenue: ' + inr(c.raw) + ' (' + inrExact(c.raw) + ')',
+            afterLabel: (c) => {
+              const row = items[c.dataIndex] || {};
+              const lines = [];
+              if (row.qty_sold) lines.push(' Purchases: ' + Number(row.qty_sold).toLocaleString('en-IN'));
+              if (row.campaign_count) lines.push(' Campaigns: ' + Number(row.campaign_count).toLocaleString('en-IN'));
+              return lines;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          border: { display: true, color: '#e2e8f0' },
+          grid: { display: false, drawOnChartArea: false },
+          ticks: { color: '#334155', font: { size: 11.5, weight: '600' }, padding: 6 }
+        },
+        y: {
+          beginAtZero: true,
+          grace: '12%',
+          border: { display: false, dash: [2, 3] },
+          grid: {
+            color: '#cbd5e1',
+            borderDash: [2, 3],
+            drawBorder: false,
+            drawTicks: false
+          },
+          ticks: {
+            color: '#1e293b',
+            font: { size: 11, weight: '500' },
+            padding: 10,
+            maxTicksLimit: 7,
+            callback: v => inrAxisTick(v)
+          }
+        }
       }
     }
   });

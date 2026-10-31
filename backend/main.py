@@ -1617,14 +1617,19 @@ def get_report():
                 substring(start_date, 1, 7) AS ym,
                 concat(substring(start_date, 1, 7), '-01') AS date, 
                 sum(purchase_value) AS sales_value, 
-                sum(purchase_count) AS qty_sold
-            {camp_base} AND purchase_value > 0 {df}
+                sum(purchase_count) AS qty_sold,
+                count() AS campaign_count
+            {camp_base} AND purchase_value > 0 AND length(start_date) >= 7 {df}
             GROUP BY ym
             ORDER BY ym ASC
             LIMIT 30
         ''')
-        trend = [{"date": r['date'], "sales_value": float(r['sales_value'] or 0), "qty_sold": int(r['qty_sold'] or 0)}
-                 for r in trend_rows]
+        trend = [{
+            "date": r['date'],
+            "sales_value": float(r['sales_value'] or 0),
+            "qty_sold": int(r['qty_sold'] or 0),
+            "campaign_count": int(r.get('campaign_count') or 0)
+        } for r in trend_rows]
 
         # ── Top categories: aggregate from stored top_categories JSON ──
         cat_rows = ch_db.query(f"SELECT top_categories {camp_base} AND top_categories != '' AND top_categories != '[]' {df}")
