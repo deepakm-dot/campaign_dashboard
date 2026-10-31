@@ -452,6 +452,28 @@ POS_UNITS_EXPR = (
 # For category breakdowns where AC OUTDOOR revenue belongs under AIR CONDITIONER
 MERCH_CAT_EXPR = f"if({IS_AC_OUTDOOR_EXPR}, 'AIR CONDITIONER', {PROD_EXPR})"
 
+# Canonical Average Selling Price (ASP) customer mobile helpers:
+# Formula: ASP = Total Net Revenue of that Day (or Scope) / Total Unique Customer Mobile Numbers Purchased on that Day (or Scope)
+CUST_MOB_NORM_EXPR = "right(replaceRegexpAll(toString(inv_m.customer_mobile), '[^0-9]', ''), 10)"
+CUST_MOB_VALID_EXPR = (
+    "length(replaceRegexpAll(toString(inv_m.customer_mobile), '[^0-9]', '')) >= 10 "
+    "AND s.invoice_no NOT LIKE '%-SR-%' "
+    "AND toFloat64(s.sold_price) > 0"
+)
+UNIQ_CUST_MOB_EXPR = f"uniqExactIf({CUST_MOB_NORM_EXPR}, {CUST_MOB_VALID_EXPR})"
+
+
+def build_inv_mobile_join_sql(sales_date_filter, branch_code=None):
+    inv_df = sales_date_filter.replace('s.date', 'date')
+    b_cond = f" AND branch = '{branch_code}'" if branch_code else ""
+    return (
+        "LEFT JOIN ("
+        "SELECT branch, invoice_no, any(customer_mobile) AS customer_mobile "
+        f"FROM azure_invoice_report WHERE {inv_df}{b_cond} "
+        "GROUP BY branch, invoice_no"
+        ") inv_m ON inv_m.branch = s.branch AND inv_m.invoice_no = s.invoice_no"
+    )
+
 
 # Only these product categories are considered in quarterly/period comparisons and insights
 FOCUS_CATS = ['CROCKERY', 'MOBILE', 'SMALL APPLIANCES', 'ACCESSORIES', 'FRAGRANCE', 'TV', 'WASHING MACHINES',
@@ -852,26 +874,39 @@ def answer_with_nlp(question):
         _single = extract_periods(question)
         if len(_single) == 1:
             start_date, end_date, date_label, is_month = _single[0][0], _single[0][1], _single[0][2], False
+    # Detect Average Selling Price (ASP) intent:
+    # ASP = Total Revenue of that Day (or Scope) / Total Unique Customer Mobile Numbers Purchased on that Day (or Scope)
+    is_asp_query = bool(re.search(
+        r'\basp\b|average\s+selling\s+price|avg\.?\s+selling\s+price|per\s+customer\s+(?:revenue|sale|sales|spend|value)|revenue\s+per\s+customer',
+        q_low
+    ))
+    _q_entity = re.sub(
+        r'\b(?:average\s+selling\s+price|avg\.?\s+selling\s+price|asp)\b',
+        ' ',
+        question,
+        flags=re.I
+    ) if is_asp_query else question
+
     # Resolve the store first and remove its name from the text used for product/brand detection,
     # otherwise store names like "IRON BRIDGE FUTURE" are mistaken for products (iron).
-    target_branch_code, target_branch_name = extract_branch(question)
-    _q_prod = question
+    target_branch_code, target_branch_name = extract_branch(_q_entity)
+    _q_prod = _q_entity
     if target_branch_name:
         _w = target_branch_name.split()
         for _n in range(len(_w), 0, -1):
             _pat = r'\b' + r'\s+'.join(re.escape(x) for x in _w[:_n]) + r'\b'
-            if re.search(_pat, question, flags=re.I):
-                _q_prod = re.sub(_pat, ' ', question, flags=re.I)
+            if re.search(_pat, _q_entity, flags=re.I):
+                _q_prod = re.sub(_pat, ' ', _q_entity, flags=re.I)
                 break
     product, item_term, display_name = extract_product_and_item(_q_prod)
     brand = extract_brand(_q_prod)
 
     # Model-family names that customers use instead of product/brand (e.g. "iphone", "galaxy")
-    if re.search(r'\b(iphones?|i\s+phones?)\b', question.lower()):
+    if re.search(r'\b(iphones?|i\s+phones?)\b', _q_entity.lower()):
         product, item_term, display_name, brand = 'MOBILE', None, 'iPhone', 'APPLE'
-    elif re.search(r'\bgalaxy\b', question.lower()):
+    elif re.search(r'\bgalaxy\b', _q_entity.lower()):
         product, item_term, display_name, brand = 'MOBILE', None, 'Galaxy', 'SAMSUNG'
-    target_branch_code, target_branch_name = extract_branch(question)
+    target_branch_code, target_branch_name = extract_branch(_q_entity)
 
     is_qty_query = bool(re.search(
         r'\b(how\s+many|quantity|units?|volume|qty|count|number\s+of|how\s+much\s+(?:units?|pieces?)|in\s+terms\s+of\s+(?:quantity|units?))\b',
@@ -1038,7 +1073,12 @@ def answer_with_nlp(question):
         cmp_periods = extract_periods(question)
         if len(cmp_periods) == 2:
             cmp_periods.sort(key=lambda p: p[0])  # base = earlier period, current = later
-    if len(cmp_periods) == 2 and re.search(r'\b(compar\w*|vs\.?|versus|against|difference|differ\w*|previous year|last year|yoy)\b', q_low):
+    if is_asp_query and len(cmp_periods) == 2:
+        (prev_start_date, prev_end_date, prev_date_label), (start_date, end_date, date_label) = cmp_periods
+        date_filter = f"toDate(s.date) = '{start_date}'" if start_date == end_date else f"toDate(s.date) >= '{start_date}' AND toDate(s.date) <= '{end_date}'"
+        prev_date_filter = f"toDate(s.date) = '{prev_start_date}'" if prev_start_date == prev_end_date else f"toDate(s.date) >= '{prev_start_date}' AND toDate(s.date) <= '{prev_end_date}'"
+        is_compare = True
+    if (not is_asp_query) and len(cmp_periods) == 2 and re.search(r'\b(compar\w*|vs\.?|versus|against|difference|differ\w*|previous year|last year|yoy)\b', q_low):
         (d_a, d_a_end, lab_a), (d_b, d_b_end, lab_b) = cmp_periods
         # Like-for-like is the DEFAULT for period (quarter / month-span) comparisons: stores with no sales in the base period are excluded.
         # Single-day comparisons keep all stores unless asked. Say "including new stores" to opt out.
@@ -1205,16 +1245,17 @@ def answer_with_nlp(question):
             }
 
     # 1b. PRODUCT RANKING - "which product sold the most/least on <date>" (all stores or one store)
-    rank_intent = bool(re.search(r'\b(most|least|highest|lowest|top|best|worst|bottom|selling|slowest|fastest)\b', q_low)) \
-        and bool(re.search(r'\b(products?|items?|categor(?:y|ies)|models?)\b', q_low))
+    _q_rank = re.sub(r'\b(?:average\s+selling\s+price|avg\.?\s+selling\s+price)\b', 'asp', q_low)
+    rank_intent = bool(re.search(r'\b(most|least|highest|lowest|top|best|worst|bottom|selling|slowest|fastest)\b', _q_rank)) \
+        and bool(re.search(r'\b(products?|items?|categor(?:y|ies)|models?)\b', _q_rank))
     # "which product sold more / less (in terms of units)" on a date / period / store
-    _which_more = bool(re.search(r'\bwhich\b.*\b(products?|items?|categor(?:y|ies)|models?)\b.*\b(sold|sell|sells|selling)\s+(the\s+)?(more|less|lesser|fewer)\b', q_low)) \
-        or bool(re.search(r'\bwhich\b.*\b(products?|items?|categor(?:y|ies)|models?)\b.*\b(more|less)\s+(in\s+terms\s+of|by)\b', q_low))
+    _which_more = bool(re.search(r'\bwhich\b.*\b(products?|items?|categor(?:y|ies)|models?)\b.*\b(sold|sell|sells|selling)\s+(the\s+)?(more|less|lesser|fewer)\b', _q_rank)) \
+        or bool(re.search(r'\bwhich\b.*\b(products?|items?|categor(?:y|ies)|models?)\b.*\b(more|less)\s+(in\s+terms\s+of|by)\b', _q_rank))
     if _which_more:
         rank_intent = True
-        if re.search(r'\b(less|lesser|fewer)\b', q_low):
+        if re.search(r'\b(less|lesser|fewer)\b', _q_rank):
             is_least = True
-    if (rank_intent or any(k in q_low for k in ['product breakdown', 'sold the most', 'sold most', 'most sold', 'best selling', 'top selling'])) \
+    if (rank_intent or any(k in _q_rank for k in ['product breakdown', 'sold the most', 'sold most', 'most sold', 'best selling', 'top selling'])) \
             and not (product or item_term) \
             and (bool(target_branch_code) or not any(k in q_low for k in ['store', 'stores', 'branches', 'branch'])):
         by_revenue = any(k in q_low for k in ['revenue', 'sales value', 'amount', 'value', 'turnover', 'worth'])
@@ -1227,6 +1268,59 @@ def answer_with_nlp(question):
         scope = target_branch_name if target_branch_code else "all retail stores"
         base_where = (f"WHERE {date_filter} {branch_cond} "
                       f"AND s.item_code NOT LIKE 'SRV%' AND {prod_expr} != '' AND {prod_expr} NOT IN ({excluded})")
+        if is_asp_query:
+            inv_join_1b = build_inv_mobile_join_sql(date_filter, target_branch_code)
+            order = "asp ASC, revenue ASC" if is_least else "asp DESC, revenue DESC"
+            sql = f"""
+                SELECT {prod_expr} AS product,
+                       {net_units} AS units,
+                       round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) AS revenue,
+                       {UNIQ_CUST_MOB_EXPR} AS uniq_customers,
+                       if({UNIQ_CUST_MOB_EXPR} > 0, round(sum(toFloat64(s.sold_price) * toInt64(s.qty)) / {UNIQ_CUST_MOB_EXPR}, 2), 0) AS asp
+                FROM azure_sales_report s
+                LEFT JOIN branch_master bm ON bm.code = s.branch
+                LEFT JOIN item_master im ON im.item_code = s.item_code
+                {inv_join_1b}
+                {base_where}
+                GROUP BY product
+                HAVING uniq_customers > 0 AND revenue > 0
+                ORDER BY {order}
+                LIMIT {limit}
+            """
+            rows = run_sql(sql)
+            if rows:
+                top = rows[0]
+                top_rev = float(top['revenue'] or 0)
+                top_cust = int(float(top['uniq_customers'] or 0))
+                top_units = int(float(top['units'] or 0))
+                top_asp = float(top['asp'] or 0)
+                ans = (
+                    f"On **{date_label}** at **{scope}**, the product category with the {'lowest' if is_least else 'highest'} "
+                    f"**Average Selling Price (ASP)** was **{top['product']}** at **{format_inr_exact(top_asp)}** "
+                    f"(**{format_inr_exact(top_rev)}** total revenue ÷ **{format_units(top_cust)}** unique customer mobile numbers; "
+                    f"**{format_units(top_units)} units** sold)."
+                )
+                cards = [
+                    {"label": f"{'Lowest' if is_least else 'Highest'} ASP Category", "value": top['product'], "color": "#ef4444" if is_least else "#4f46e5"},
+                    {"label": "Category ASP", "value": format_inr_exact(top_asp), "color": "#059669"},
+                    {"label": "Unique Customers", "value": format_units(top_cust), "color": "#2563eb"},
+                    {"label": "Category Revenue", "value": format_inr(top_rev), "color": "#7c3aed"}
+                ]
+                table = {
+                    "headers": ["Product Category", "ASP (Rev ÷ Unique Customers)", "Total Revenue", "Unique Customer Mobiles", "Units Sold"],
+                    "rows": [
+                        [r['product'], format_inr_exact(r['asp']), format_inr_exact(r['revenue']), format_units(r['uniq_customers']), format_units(r['units'])]
+                        for r in rows
+                    ]
+                }
+                return {
+                    "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
+                    "suggestions": [
+                        f"What is the ASP of {top['product'].title()} on {start_date}?",
+                        f"What was the overall ASP on {start_date}?",
+                        f"What was the total sale on {start_date}?"
+                    ]
+                }
         if by_revenue:
             order = "revenue ASC, units ASC" if is_least else "revenue DESC, units DESC"
         else:
@@ -1356,14 +1450,19 @@ def answer_with_nlp(question):
         else:
             branch_scope_sql = RETAIL_STORE_FILTER_SQL
 
+        need_mob_2 = is_asp_query or (is_compare and bool(prev_date_filter))
+        inv_join_2 = build_inv_mobile_join_sql(date_filter, target_branch_code) if need_mob_2 else ""
+        mob_sel_2 = f",\n                   {UNIQ_CUST_MOB_EXPR} as uniq_customers" if need_mob_2 else ""
+
         sql = f"""
             SELECT round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue,
                    sum({POS_UNITS_EXPR}) as units,
                    count(DISTINCT if(toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices,
-                   count(DISTINCT s.branch) as branches
+                   count(DISTINCT s.branch) as branches{mob_sel_2}
             FROM azure_sales_report s
             LEFT JOIN branch_master bm ON bm.code = s.branch
             LEFT JOIN item_master im ON im.item_code = s.item_code
+            {inv_join_2}
             WHERE {date_filter}
               AND {branch_scope_sql}
               AND coalesce(im.item_group, '') != 'SCHEME'
@@ -1374,17 +1473,22 @@ def answer_with_nlp(question):
         units = int(float(rows[0]['units'])) if rows and rows[0].get('units') is not None else 0
         invoices = int(float(rows[0]['invoices'])) if rows and rows[0].get('invoices') is not None else 0
         branches = int(float(rows[0]['branches'])) if rows and rows[0].get('branches') is not None else 0
+        uniq_cust = int(float(rows[0]['uniq_customers'])) if (need_mob_2 and rows and rows[0].get('uniq_customers') is not None) else 0
+        asp_val = round(rev / uniq_cust, 2) if uniq_cust > 0 else 0.0
 
-        # Check if user requested a comparison with previous year
+        # Check if user requested a comparison with previous year / date
         if is_compare and prev_date_filter:
+            prev_inv_join_2 = build_inv_mobile_join_sql(prev_date_filter, target_branch_code)
             prev_sql = f"""
                 SELECT round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue,
                        sum({POS_UNITS_EXPR}) as units,
                        count(DISTINCT if(toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices,
-                       count(DISTINCT s.branch) as branches
+                       count(DISTINCT s.branch) as branches,
+                       {UNIQ_CUST_MOB_EXPR} as uniq_customers
                 FROM azure_sales_report s
                 LEFT JOIN branch_master bm ON bm.code = s.branch
                 LEFT JOIN item_master im ON im.item_code = s.item_code
+                {prev_inv_join_2}
                 WHERE {prev_date_filter}
                   AND {branch_scope_sql}
                   AND coalesce(im.item_group, '') != 'SCHEME'
@@ -1394,39 +1498,59 @@ def answer_with_nlp(question):
             rev_prev = float(prev_rows[0]['revenue']) if prev_rows and prev_rows[0].get('revenue') is not None else 0
             units_prev = int(float(prev_rows[0]['units'])) if prev_rows and prev_rows[0].get('units') is not None else 0
             inv_prev = int(float(prev_rows[0]['invoices'])) if prev_rows and prev_rows[0].get('invoices') is not None else 0
+            uniq_cust_prev = int(float(prev_rows[0]['uniq_customers'])) if prev_rows and prev_rows[0].get('uniq_customers') is not None else 0
+            asp_prev = round(rev_prev / uniq_cust_prev, 2) if uniq_cust_prev > 0 else 0.0
 
             diff_units = units - units_prev
             pct_units = (diff_units / units_prev * 100) if units_prev > 0 else 0
             diff_rev = rev - rev_prev
             pct_rev = (diff_rev / rev_prev * 100) if rev_prev > 0 else 0
+            diff_asp = round(asp_val - asp_prev, 2)
+            pct_asp = (diff_asp / asp_prev * 100) if asp_prev > 0 else 0
 
             trend_u = f"{diff_units:+d} ({pct_units:+.1f}%)"
             trend_r = f"{format_inr(diff_rev)} ({pct_rev:+.1f}%)"
+            trend_asp = f"{'+' if diff_asp >= 0 else ''}{format_inr_exact(diff_asp)} ({pct_asp:+.1f}%)"
             growth_word = "growth" if diff_units >= 0 else "decline"
             u_color = "#059669" if diff_units >= 0 else "#ef4444"
             r_color = "#059669" if diff_rev >= 0 else "#ef4444"
+            asp_color = "#059669" if diff_asp >= 0 else "#ef4444"
 
-            ans = (
-                f"On **{date_label}**, a total of **{format_units(units)} units** of **{display_title}** were sold "
-                f"generating **{format_inr(rev)}** ({format_inr_exact(rev)} across {format_units(invoices)} customer invoices), "
-                f"compared to **{format_units(units_prev)} units** ({format_inr(rev_prev)} across {format_units(inv_prev)} invoices) "
-                f"on **{prev_date_label}** of previous year (**{trend_u} units**, **{pct_rev:+.1f}% revenue {growth_word}**)."
-            )
-
-            cards = [
-                {"label": f"{date_label} Units", "value": f"{format_units(units)} units", "color": "#2563eb"},
-                {"label": f"{prev_date_label} Units", "value": f"{format_units(units_prev)} units", "color": "#6b7280"},
-                {"label": "Unit Growth (YoY)", "value": trend_u, "color": u_color},
-                {"label": "Revenue Growth (YoY)", "value": trend_r, "color": r_color}
-            ]
+            if is_asp_query:
+                ans = (
+                    f"On **{date_label}**, the **Average Selling Price (ASP)** of **{display_title}** was **{format_inr_exact(asp_val)}** "
+                    f"(**{format_inr_exact(rev)}** total revenue ÷ **{format_units(uniq_cust)}** unique customer mobile numbers), "
+                    f"compared to **{format_inr_exact(asp_prev)}** (**{format_inr_exact(rev_prev)}** ÷ **{format_units(uniq_cust_prev)}** unique customer mobiles) "
+                    f"on **{prev_date_label}** (**{trend_asp}** ASP variance)."
+                )
+                cards = [
+                    {"label": f"{date_label} ASP", "value": format_inr_exact(asp_val), "color": "#4f46e5"},
+                    {"label": f"{prev_date_label} ASP", "value": format_inr_exact(asp_prev), "color": "#6b7280"},
+                    {"label": "ASP Change", "value": trend_asp, "color": asp_color},
+                    {"label": "Unique Customers", "value": format_units(uniq_cust), "color": "#2563eb"}
+                ]
+            else:
+                ans = (
+                    f"On **{date_label}**, a total of **{format_units(units)} units** of **{display_title}** were sold "
+                    f"generating **{format_inr(rev)}** ({format_inr_exact(rev)} across {format_units(uniq_cust)} unique customers / {format_units(invoices)} invoices), "
+                    f"compared to **{format_units(units_prev)} units** ({format_inr(rev_prev)} across {format_units(uniq_cust_prev)} unique customers) "
+                    f"on **{prev_date_label}** of previous year (**{trend_u} units**, **{pct_rev:+.1f}% revenue {growth_word}**)."
+                )
+                cards = [
+                    {"label": f"{date_label} Units", "value": f"{format_units(units)} units", "color": "#2563eb"},
+                    {"label": f"{prev_date_label} Units", "value": f"{format_units(units_prev)} units", "color": "#6b7280"},
+                    {"label": "Unit Growth (YoY)", "value": trend_u, "color": u_color},
+                    {"label": "Revenue Growth (YoY)", "value": trend_r, "color": r_color}
+                ]
 
             table = {
-                "headers": ["Metric", date_label, prev_date_label, "YoY Variance"],
+                "headers": ["Metric", date_label, prev_date_label, "Variance"],
                 "rows": [
-                    ["Units Sold", f"{units:,} units", f"{units_prev:,} units", trend_u],
+                    ["Avg Selling Price (ASP = Rev ÷ Unique Mobiles)", format_inr_exact(asp_val), format_inr_exact(asp_prev), trend_asp],
                     ["Total Revenue", format_inr_exact(rev), format_inr_exact(rev_prev), trend_r],
-                    ["Customer Invoices", f"{invoices:,}", f"{inv_prev:,}", f"{invoices - inv_prev:+d}"],
-                    ["Avg Selling Price (ASP)", format_inr(rev / max(units, 1)), format_inr(rev_prev / max(units_prev, 1)), f"{format_inr((rev / max(units, 1)) - (rev_prev / max(units_prev, 1)))}"]
+                    ["Unique Customer Mobiles", f"{uniq_cust:,}", f"{uniq_cust_prev:,}", f"{uniq_cust - uniq_cust_prev:+d}"],
+                    ["Units Sold", f"{units:,} units", f"{units_prev:,} units", trend_u],
+                    ["Customer Invoices", f"{invoices:,}", f"{inv_prev:,}", f"{invoices - inv_prev:+d}"]
                 ]
             }
 
@@ -1434,8 +1558,66 @@ def answer_with_nlp(question):
                 "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
                 "suggestions": [
                     f"Top brands for {display_title} on {start_date}",
-                    f"What was total company revenue on {start_date}?",
+                    f"What was the overall ASP on {start_date}?",
                     f"Compare total sales on {start_date} with previous year"
+                ]
+            }
+
+        if is_asp_query:
+            b_rows_asp = []
+            if not brand:
+                b_sql_asp = f"""
+                    SELECT coalesce(nullIf(trim(im.brand), ''), 'Unmapped POS SKU') as brand,
+                           round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue,
+                           {UNIQ_CUST_MOB_EXPR} as uniq_customers,
+                           sum({POS_UNITS_EXPR}) as units,
+                           if({UNIQ_CUST_MOB_EXPR} > 0, round(sum(toFloat64(s.sold_price) * toInt64(s.qty)) / {UNIQ_CUST_MOB_EXPR}, 2), 0) as asp
+                    FROM azure_sales_report s
+                    LEFT JOIN branch_master bm ON bm.code = s.branch
+                    LEFT JOIN item_master im ON im.item_code = s.item_code
+                    {inv_join_2}
+                    WHERE {date_filter}
+                      AND {branch_scope_sql}
+                      AND coalesce(im.item_group, '') != 'SCHEME'
+                      AND {item_cond}
+                    GROUP BY brand
+                    ORDER BY revenue DESC
+                    LIMIT 5
+                """
+                b_rows_asp = run_sql(b_sql_asp) or []
+            _wp_asp = f"In **{date_label}**" if is_month else (f"From **{date_label}**" if start_date != end_date else f"On **{date_label}**")
+            _bw_asp = "branch" if branches == 1 else "branches"
+            ans = (
+                f"{_wp_asp}, the **Average Selling Price (ASP)** of **{display_title}** across **{branches} {_bw_asp}** was "
+                f"**{format_inr_exact(asp_val)}**, calculated from **Total Revenue of {format_inr_exact(rev)}** (**{format_inr(rev)}**) "
+                f"divided by **{format_units(uniq_cust)} unique customer mobile numbers** purchased "
+                f"(**{format_units(units)} units** sold across **{format_units(invoices)} customer invoices**)."
+            )
+            cards = [
+                {"label": f"{display_title} ASP", "value": format_inr_exact(asp_val), "color": "#4f46e5"},
+                {"label": "Total Revenue", "value": format_inr(rev), "color": "#059669"},
+                {"label": "Unique Customers", "value": format_units(uniq_cust), "color": "#2563eb"},
+                {"label": "Units Sold", "value": format_units(units), "color": "#d97706"}
+            ]
+            t_rows = [[f"OVERALL {display_title.upper()}", format_inr_exact(rev), format_units(uniq_cust), format_units(units), format_inr_exact(asp_val)]]
+            for r in b_rows_asp:
+                t_rows.append([
+                    r['brand'],
+                    format_inr_exact(r['revenue']),
+                    format_units(r['uniq_customers']),
+                    format_units(r['units']),
+                    format_inr_exact(r['asp'])
+                ])
+            table = {
+                "headers": ["Scope / Brand", "Total Revenue", "Unique Customer Mobiles", "Units Sold", "ASP (Rev ÷ Unique Customers)"],
+                "rows": t_rows
+            }
+            return {
+                "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
+                "suggestions": [
+                    f"What was the overall ASP on {start_date}?",
+                    f"Compare ASP of {display_title} on {start_date} with previous year",
+                    f"Top branches for {display_title} on {start_date}"
                 ]
             }
 
@@ -1501,14 +1683,18 @@ def answer_with_nlp(question):
             "suggestions": [f"Top brands for {display_title} on {start_date}", f"What was the total sale on {start_date}?", f"Top branches for {display_title} on {start_date}"]
         }
 
-    # 3. SINGLE BRANCH / STORE SALES (e.g. "what is total revenue on 01-06-2026 by balussery future")
+    # 3. SINGLE BRANCH / STORE SALES (e.g. "what is total revenue on 01-06-2026 by balussery future", "ASP of Gundlupete Future yesterday")
     if target_branch_code:
+        need_mob_3 = is_asp_query or (is_compare and bool(prev_date_filter))
+        inv_join_3 = build_inv_mobile_join_sql(date_filter, target_branch_code) if need_mob_3 else ""
+        mob_sel_3 = f",\n                   {UNIQ_CUST_MOB_EXPR} as uniq_customers" if need_mob_3 else ""
         sql = f"""
             SELECT round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue,
                    sum({POS_UNITS_EXPR}) as units,
-                   count(DISTINCT if(toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices
+                   count(DISTINCT if(toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices{mob_sel_3}
             FROM azure_sales_report s
             LEFT JOIN item_master im ON im.item_code = s.item_code
+            {inv_join_3}
             WHERE {date_filter}
               AND s.branch = '{target_branch_code}'
               AND coalesce(im.product, '') != 'SCHEME'
@@ -1518,15 +1704,20 @@ def answer_with_nlp(question):
         rev = float(rows[0]['revenue']) if rows and rows[0].get('revenue') is not None else 0
         units = int(float(rows[0]['units'])) if rows and rows[0].get('units') is not None else 0
         invoices = int(float(rows[0]['invoices'])) if rows and rows[0].get('invoices') is not None else 0
+        uniq_cust_3 = int(float(rows[0]['uniq_customers'])) if (need_mob_3 and rows and rows[0].get('uniq_customers') is not None) else 0
+        asp_3 = round(rev / uniq_cust_3, 2) if uniq_cust_3 > 0 else 0.0
 
-        # Check if user requested a comparison with previous year
+        # Check if user requested a comparison with previous year / date
         if is_compare and prev_date_filter:
+            prev_inv_join_3 = build_inv_mobile_join_sql(prev_date_filter, target_branch_code)
             prev_sql = f"""
                 SELECT round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue,
                        sum({POS_UNITS_EXPR}) as units,
-                       count(DISTINCT if(toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices
+                       count(DISTINCT if(toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices,
+                       {UNIQ_CUST_MOB_EXPR} as uniq_customers
                 FROM azure_sales_report s
                 LEFT JOIN item_master im ON im.item_code = s.item_code
+                {prev_inv_join_3}
                 WHERE {prev_date_filter}
                   AND s.branch = '{target_branch_code}'
                   AND coalesce(im.product, '') != 'SCHEME'
@@ -1536,44 +1727,145 @@ def answer_with_nlp(question):
             rev_prev = float(prev_rows[0]['revenue']) if prev_rows and prev_rows[0].get('revenue') is not None else 0
             units_prev = int(float(prev_rows[0]['units'])) if prev_rows and prev_rows[0].get('units') is not None else 0
             inv_prev = int(float(prev_rows[0]['invoices'])) if prev_rows and prev_rows[0].get('invoices') is not None else 0
+            uniq_cust_prev_3 = int(float(prev_rows[0]['uniq_customers'])) if prev_rows and prev_rows[0].get('uniq_customers') is not None else 0
+            asp_prev_3 = round(rev_prev / uniq_cust_prev_3, 2) if uniq_cust_prev_3 > 0 else 0.0
 
             diff_units = units - units_prev
             pct_units = (diff_units / units_prev * 100) if units_prev > 0 else 0
             diff_rev = rev - rev_prev
             pct_rev = (diff_rev / rev_prev * 100) if rev_prev > 0 else 0
+            diff_asp_3 = round(asp_3 - asp_prev_3, 2)
+            pct_asp_3 = (diff_asp_3 / asp_prev_3 * 100) if asp_prev_3 > 0 else 0
             trend_u = f"{diff_units:+d} ({pct_units:+.1f}%)"
             trend_r = f"{format_inr(diff_rev)} ({pct_rev:+.1f}%)"
+            trend_asp_3 = f"{'+' if diff_asp_3 >= 0 else ''}{format_inr_exact(diff_asp_3)} ({pct_asp_3:+.1f}%)"
             growth_word = "growth" if diff_rev >= 0 else "decline"
             u_color = "#059669" if diff_units >= 0 else "#ef4444"
             r_color = "#059669" if diff_rev >= 0 else "#ef4444"
+            asp_color_3 = "#059669" if diff_asp_3 >= 0 else "#ef4444"
 
-            ans = (
-                f"On **{date_label}**, **{target_branch_name}** generated **{format_inr(rev)}** ({format_inr_exact(rev)}) "
-                f"with **{format_units(units)} units** sold across {format_units(invoices)} invoices, compared to "
-                f"**{format_inr(rev_prev)}** ({format_units(units_prev)} units across {format_units(inv_prev)} invoices) "
-                f"on **{prev_date_label}** of previous year (**{trend_r} revenue {growth_word}**, {trend_u} units)."
-            )
-            cards = [
-                {"label": f"{date_label} Sales", "value": format_inr(rev), "color": "#2563eb"},
-                {"label": f"{prev_date_label} Sales", "value": format_inr(rev_prev), "color": "#6b7280"},
-                {"label": "Revenue Growth (YoY)", "value": trend_r, "color": r_color},
-                {"label": "Unit Growth (YoY)", "value": trend_u, "color": u_color}
-            ]
+            if is_asp_query:
+                ans = (
+                    f"On **{date_label}**, the **Average Selling Price (ASP)** at **{target_branch_name}** was **{format_inr_exact(asp_3)}** "
+                    f"(**{format_inr_exact(rev)}** net revenue ÷ **{format_units(uniq_cust_3)}** unique customer mobile numbers), "
+                    f"compared to **{format_inr_exact(asp_prev_3)}** (**{format_inr_exact(rev_prev)}** ÷ **{format_units(uniq_cust_prev_3)}** unique customer mobiles) "
+                    f"on **{prev_date_label}** (**{trend_asp_3}** ASP variance)."
+                )
+                cards = [
+                    {"label": f"{date_label} ASP", "value": format_inr_exact(asp_3), "color": "#4f46e5"},
+                    {"label": f"{prev_date_label} ASP", "value": format_inr_exact(asp_prev_3), "color": "#6b7280"},
+                    {"label": "ASP Change", "value": trend_asp_3, "color": asp_color_3},
+                    {"label": "Unique Customers", "value": format_units(uniq_cust_3), "color": "#2563eb"}
+                ]
+            else:
+                ans = (
+                    f"On **{date_label}**, **{target_branch_name}** generated **{format_inr(rev)}** ({format_inr_exact(rev)}) "
+                    f"with **{format_units(units)} units** sold across {format_units(uniq_cust_3)} unique customers ({format_units(invoices)} invoices), compared to "
+                    f"**{format_inr(rev_prev)}** ({format_units(units_prev)} units across {format_units(uniq_cust_prev_3)} unique customers) "
+                    f"on **{prev_date_label}** of previous year (**{trend_r} revenue {growth_word}**, {trend_u} units)."
+                )
+                cards = [
+                    {"label": f"{date_label} Sales", "value": format_inr(rev), "color": "#2563eb"},
+                    {"label": f"{prev_date_label} Sales", "value": format_inr(rev_prev), "color": "#6b7280"},
+                    {"label": "Revenue Growth (YoY)", "value": trend_r, "color": r_color},
+                    {"label": "Unit Growth (YoY)", "value": trend_u, "color": u_color}
+                ]
             table = {
-                "headers": ["Metric", date_label, prev_date_label, "YoY Variance"],
+                "headers": ["Metric", date_label, prev_date_label, "Variance"],
                 "rows": [
+                    ["Avg Selling Price (ASP = Rev ÷ Unique Mobiles)", format_inr_exact(asp_3), format_inr_exact(asp_prev_3), trend_asp_3],
                     ["Net Sales Revenue", format_inr_exact(rev), format_inr_exact(rev_prev), trend_r],
+                    ["Unique Customer Mobiles", f"{uniq_cust_3:,}", f"{uniq_cust_prev_3:,}", f"{uniq_cust_3 - uniq_cust_prev_3:+d}"],
                     ["Units Sold", f"{units:,} units", f"{units_prev:,} units", trend_u],
-                    ["Customer Invoices", f"{invoices:,}", f"{inv_prev:,}", f"{invoices - inv_prev:+d}"],
-                    ["Avg Order Value (AOV)", format_inr_exact(rev / max(invoices, 1)), format_inr_exact(rev_prev / max(inv_prev, 1)), f"{format_inr_exact((rev / max(invoices, 1)) - (rev_prev / max(inv_prev, 1)))}"]
+                    ["Customer Invoices", f"{invoices:,}", f"{inv_prev:,}", f"{invoices - inv_prev:+d}"]
                 ]
             }
             return {
                 "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
                 "suggestions": [
                     f"Top products at {target_branch_name} on {start_date}",
-                    f"How much Mobile was sold in {target_branch_name} on {start_date}?",
+                    f"What was the overall ASP on {start_date}?",
                     f"What was total company revenue on {start_date}?"
+                ]
+            }
+
+        if is_asp_query:
+            _wp3_asp = f"In **{date_label}**" if is_month else (f"From **{date_label}**" if start_date != end_date else f"On **{date_label}**")
+            if start_date == end_date:
+                p_sql_asp = f"""
+                    SELECT if({MERCH_CAT_EXPR} = '', 'Other', {MERCH_CAT_EXPR}) as product,
+                           round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue,
+                           {UNIQ_CUST_MOB_EXPR} as uniq_customers,
+                           sum({POS_UNITS_EXPR}) as units,
+                           if({UNIQ_CUST_MOB_EXPR} > 0, round(sum(toFloat64(s.sold_price) * toInt64(s.qty)) / {UNIQ_CUST_MOB_EXPR}, 2), 0) as asp
+                    FROM azure_sales_report s
+                    LEFT JOIN item_master im ON im.item_code = s.item_code
+                    {inv_join_3}
+                    WHERE {date_filter}
+                      AND s.branch = '{target_branch_code}'
+                      AND coalesce(im.product, '') NOT IN ('SCHEME', 'SMART CHOICE')
+                      AND coalesce(im.item_group, '') != 'SCHEME'
+                    GROUP BY product
+                    ORDER BY revenue DESC
+                    LIMIT 5
+                """
+                p_rows_asp = run_sql(p_sql_asp) or []
+                t_rows_3 = [[f"OVERALL {target_branch_name}", format_inr_exact(rev), format_units(uniq_cust_3), format_units(units), format_inr_exact(asp_3)]]
+                for pr in p_rows_asp:
+                    t_rows_3.append([pr['product'], format_inr_exact(pr['revenue']), format_units(pr['uniq_customers']), format_units(pr['units']), format_inr_exact(pr['asp'])])
+                table = {
+                    "headers": ["Scope / Category", "Total Revenue", "Unique Customer Mobiles", "Units Sold", "ASP (Rev ÷ Unique Customers)"],
+                    "rows": t_rows_3
+                }
+            else:
+                try:
+                    span_3 = (datetime.strptime(end_date, '%Y-%m-%d') - datetime.strptime(start_date, '%Y-%m-%d')).days + 1
+                except Exception:
+                    span_3 = 30
+                grp_dt_3 = "toString(toDate(s.date))" if span_3 <= 31 else "toString(toStartOfMonth(toDate(s.date)))"
+                d_sql_3 = f"""
+                    SELECT {grp_dt_3} as period_dt,
+                           round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue,
+                           {UNIQ_CUST_MOB_EXPR} as uniq_customers,
+                           sum({POS_UNITS_EXPR}) as units,
+                           if({UNIQ_CUST_MOB_EXPR} > 0, round(sum(toFloat64(s.sold_price) * toInt64(s.qty)) / {UNIQ_CUST_MOB_EXPR}, 2), 0) as asp
+                    FROM azure_sales_report s
+                    LEFT JOIN item_master im ON im.item_code = s.item_code
+                    {inv_join_3}
+                    WHERE {date_filter}
+                      AND s.branch = '{target_branch_code}'
+                      AND coalesce(im.product, '') != 'SCHEME'
+                      AND coalesce(im.item_group, '') != 'SCHEME'
+                    GROUP BY period_dt
+                    ORDER BY period_dt DESC
+                    LIMIT 31
+                """
+                d_rows_3 = run_sql(d_sql_3) or []
+                t_rows_3 = [[f"OVERALL PERIOD ({target_branch_name})", format_inr_exact(rev), format_units(uniq_cust_3), format_units(units), format_inr_exact(asp_3)]]
+                for dr in d_rows_3:
+                    t_rows_3.append([dr['period_dt'], format_inr_exact(dr['revenue']), format_units(dr['uniq_customers']), format_units(dr['units']), format_inr_exact(dr['asp'])])
+                table = {
+                    "headers": ["Date" if span_3 <= 31 else "Month", "Total Revenue", "Unique Customer Mobiles", "Units Sold", "ASP (Rev ÷ Unique Customers)"],
+                    "rows": t_rows_3
+                }
+            ans = (
+                f"{_wp3_asp}, the **Average Selling Price (ASP)** at **{target_branch_name}** was **{format_inr_exact(asp_3)}**, "
+                f"calculated from **Total Revenue of {format_inr_exact(rev)}** (**{format_inr(rev)}**) divided by "
+                f"**{format_units(uniq_cust_3)} unique customer mobile numbers** purchased "
+                f"(**{format_units(units)} units** sold across **{format_units(invoices)} customer invoices**)."
+            )
+            cards = [
+                {"label": "Store ASP", "value": format_inr_exact(asp_3), "color": "#4f46e5"},
+                {"label": "Store Net Sales", "value": format_inr(rev), "color": "#059669"},
+                {"label": "Unique Customers", "value": format_units(uniq_cust_3), "color": "#2563eb"},
+                {"label": "Store Branch", "value": target_branch_name, "color": "#d97706"}
+            ]
+            return {
+                "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
+                "suggestions": [
+                    f"What was the overall ASP on {start_date}?",
+                    f"Compare ASP of {target_branch_name} on {start_date} with previous year",
+                    f"How much Mobile was sold in {target_branch_name} on {start_date}?"
                 ]
             }
 
@@ -1664,8 +1956,13 @@ def answer_with_nlp(question):
                 "suggestions": [f"How much {top1['product']} was sold on {start_date}?", f"What was the total sale on {start_date}?", f"Which branch had the highest sales on {start_date}?"]
             }
 
-    # 5. BRANCH / STORE SALES (e.g. "least 5 performing future stores this month in terms of revenue", "top branches", etc.)
-    if any(k in q_low for k in ['branch', 'branches', 'store', 'stores', 'location', 'locations', 'highest store', 'top branch', 'least performed', 'least performing', 'lowest store', 'worst store', 'bottom store']):
+    # 5. BRANCH / STORE SALES (e.g. "least 5 performing future stores this month in terms of revenue", "top branches by ASP", etc.)
+    _has_store_rank_intent = bool(re.search(
+        r'\b(top|least|lowest|highest|best|worst|bottom|which|wise|each|every|rank\w*|list|perform\w*)\b',
+        q_low
+    )) or bool(m_lim)
+    if (any(k in q_low for k in ['branch', 'branches', 'store', 'stores', 'location', 'locations', 'highest store', 'top branch', 'least performed', 'least performing', 'lowest store', 'worst store', 'bottom store'])
+            and (not is_asp_query or _has_store_rank_intent)):
         branch_name_expr = """multiIf(
             s.branch = 'GPF', 'GUNDLUPETE FUTURE',
             s.branch = 'MLF', 'MALAPPURAM FUTURE',
@@ -1684,11 +1981,17 @@ def answer_with_nlp(question):
             store_type_desc = "Normal stores"
 
         by_rev_explicit = any(k in q_low for k in ['revenue', 'sales value', 'amount', 'value', 'turnover', 'worth'])
-        sort_by_units = is_qty_query and not by_rev_explicit
-        metric_col = "units" if sort_by_units else "revenue"
-        metric_desc = "units sold" if sort_by_units else "revenue"
-        order_clause = f"ORDER BY {metric_col} ASC, revenue ASC" if is_least else f"ORDER BY {metric_col} DESC, revenue DESC"
-        having_clause = "HAVING revenue > 0 AND units > 0" if is_least else ""
+        sort_by_units = is_qty_query and not by_rev_explicit and not is_asp_query
+        if is_asp_query:
+            metric_col = "asp"
+            metric_desc = "Average Selling Price (ASP)"
+            order_clause = "ORDER BY asp ASC, revenue ASC" if is_least else "ORDER BY asp DESC, revenue DESC"
+            having_clause = "HAVING revenue > 0 AND uniq_customers > 0"
+        else:
+            metric_col = "units" if sort_by_units else "revenue"
+            metric_desc = "units sold" if sort_by_units else "revenue"
+            order_clause = f"ORDER BY {metric_col} ASC, revenue ASC" if is_least else f"ORDER BY {metric_col} DESC, revenue DESC"
+            having_clause = "HAVING revenue > 0 AND units > 0" if is_least else ""
 
         singular_desc = store_type_desc[:-1] if store_type_desc.endswith('s') else store_type_desc
         rank_word = f"least performing {singular_desc}" if is_least else f"top performing {singular_desc}"
@@ -1701,16 +2004,22 @@ def answer_with_nlp(question):
             span_days = 1
         include_new_stores = bool(re.search(r'\b(include|including|with)\s+(all\s+|the\s+)?(new|newly)', q_low))
         fetch_limit = (limit + 15) if (is_least and span_days >= 7 and not include_new_stores) else limit
+        inv_join_5 = build_inv_mobile_join_sql(date_filter) if is_asp_query else ""
+        asp_sel_5 = (
+            f",\n                   {UNIQ_CUST_MOB_EXPR} AS uniq_customers,"
+            f"\n                   if({UNIQ_CUST_MOB_EXPR} > 0, round(sum(toFloat64(s.sold_price) * toInt64(s.qty)) / {UNIQ_CUST_MOB_EXPR}, 2), 0) AS asp"
+        ) if is_asp_query else ""
 
         sql = f"""
             SELECT s.branch AS branch_code,
                    {branch_name_expr} AS branch_name,
                    round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) AS revenue,
                    sum({POS_UNITS_EXPR}) AS units,
-                   uniqExact(toDate(s.date)) AS active_days
+                   uniqExact(toDate(s.date)) AS active_days{asp_sel_5}
             FROM azure_sales_report s
             LEFT JOIN branch_master bm ON bm.code = s.branch
             LEFT JOIN item_master im ON im.item_code = s.item_code
+            {inv_join_5}
             WHERE {date_filter}
               AND s.branch NOT IN ('SMC','3GH','CSB','TMC','RDS','MCL3','HAC','ECO','KSO','MRK','VSP')
               AND positionCaseInsensitive({branch_name_expr}, 'GODOWN') = 0
@@ -1753,6 +2062,50 @@ def answer_with_nlp(question):
         if rows:
             top1 = rows[0]
             when_prefix = f"In **{date_label}**" if is_month else (f"From **{date_label}**" if start_date != end_date else f"On **{date_label}**")
+            period_card_val = f"{datetime.strptime(start_date, '%Y-%m-%d').strftime('%d %b')} – {datetime.strptime(end_date, '%Y-%m-%d').strftime('%d %b %Y')}" if start_date != end_date else datetime.strptime(start_date, '%Y-%m-%d').strftime('%d %b %Y')
+            sugg_period = "this month" if "This Month" in date_label else (f"{start_date} to {end_date}" if start_date != end_date else start_date)
+            opp_dir = "Top" if is_least else "Least"
+
+            if is_asp_query:
+                if len(rows) > 1:
+                    others_summary = ", ".join(
+                        f"**{r['branch_name']}** ({format_inr_exact(r['asp'])} — {format_inr_exact(r['revenue'])} ÷ {format_units(r['uniq_customers'])} customers)"
+                        for r in rows[1:min(5, len(rows))]
+                    )
+                    ans = (
+                        f"{when_prefix}, the {len(rows)} {store_type_desc} with the {'lowest' if is_least else 'highest'} **Average Selling Price (ASP)** "
+                        f"were led by **{top1['branch_name']}** at **{format_inr_exact(top1['asp'])}** "
+                        f"(**{format_inr_exact(top1['revenue'])}** revenue ÷ **{format_units(top1['uniq_customers'])}** unique customer mobile numbers)"
+                        + (f", followed by {others_summary}." if others_summary else ".")
+                    )
+                else:
+                    ans = (
+                        f"{when_prefix}, the {singular_desc} with the {'lowest' if is_least else 'highest'} **Average Selling Price (ASP)** "
+                        f"was **{top1['branch_name']}** at **{format_inr_exact(top1['asp'])}** "
+                        f"(**{format_inr_exact(top1['revenue'])}** revenue ÷ **{format_units(top1['uniq_customers'])}** unique customer mobile numbers)."
+                    )
+                cards = [
+                    {"label": card_label, "value": top1['branch_name'], "color": card_color},
+                    {"label": "Store ASP", "value": format_inr_exact(top1['asp']), "color": "#059669"},
+                    {"label": "Unique Customers", "value": format_units(top1['uniq_customers']), "color": "#2563eb"},
+                    {"label": "Period", "value": period_card_val, "color": "#7c3aed"}
+                ]
+                table = {
+                    "headers": ["Rank", "Store Branch", "ASP (Rev ÷ Unique Customers)", "Total Revenue", "Unique Customer Mobiles", "Units Sold"],
+                    "rows": [
+                        [f"#{idx}", r['branch_name'], format_inr_exact(r['asp']), format_inr_exact(r['revenue']), format_units(r['uniq_customers']), format_units(r['units'])]
+                        for idx, r in enumerate(rows, 1)
+                    ]
+                }
+                return {
+                    "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
+                    "suggestions": [
+                        f"{opp_dir} {limit} {store_type_desc} by ASP {sugg_period}",
+                        f"What was the overall ASP {sugg_period}?",
+                        f"What was the total sale {sugg_period}?"
+                    ]
+                }
+
             if len(rows) > 1:
                 others_summary = ", ".join(f"**{r['branch_name']}** ({format_inr(r['revenue'])} — {format_inr_exact(r['revenue'])})" for r in rows[1:min(5, len(rows))])
                 ans = (
@@ -1771,7 +2124,6 @@ def answer_with_nlp(question):
                 ]
                 ans += f" *(Note: Newly inaugurated / pre-opening stores active for only part of the period were excluded from the full-period bottom ranking: {', '.join(ex_bits)}. Ask 'including new stores' to include them.)*"
 
-            period_card_val = f"{datetime.strptime(start_date, '%Y-%m-%d').strftime('%d %b')} – {datetime.strptime(end_date, '%Y-%m-%d').strftime('%d %b %Y')}" if start_date != end_date else datetime.strptime(start_date, '%Y-%m-%d').strftime('%d %b %Y')
             cards = [
                 {"label": card_label, "value": top1['branch_name'], "color": card_color},
                 {"label": "Branch Revenue", "value": format_inr(top1['revenue']), "color": "#059669"},
@@ -1788,8 +2140,6 @@ def answer_with_nlp(question):
                     "headers": ["Rank", "Store Branch", "Revenue", "Units Sold"],
                     "rows": [[f"#{idx}", r['branch_name'], format_inr_exact(r['revenue']), format_units(r['units'])] for idx, r in enumerate(rows, 1)]
                 }
-            sugg_period = "this month" if "This Month" in date_label else (f"{start_date} to {end_date}" if start_date != end_date else start_date)
-            opp_dir = "Top" if is_least else "Least"
             return {
                 "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
                 "suggestions": [
@@ -1799,8 +2149,29 @@ def answer_with_nlp(question):
                 ]
             }
 
-    # 6. TOTAL SALE ON A SPECIFIC DATE OR MONTH (e.g. "what was the sale on a specific date")
-    retail_cond = f"({RETAIL_STORE_FILTER_SQL}) AND coalesce(im.product, '') != 'SCHEME' AND coalesce(im.item_group, '') != 'SCHEME'"
+    # 6. TOTAL SALE OR OVERALL ASP ON A SPECIFIC DATE OR MONTH (e.g. "what was the sale on a specific date", "what is the ASP of yesterday")
+    store_type_cond_6 = ""
+    store_scope_lbl_6 = "Retail Store"
+    store_branches_lbl_6 = "retail branches"
+    if is_asp_query:
+        if re.search(r'\bfuture\b', q_low):
+            store_type_cond_6 = f" AND upper({BRANCH_NAME_EXPR}) LIKE '%FUTURE%'"
+            store_scope_lbl_6 = "Future Store"
+            store_branches_lbl_6 = "Future branches"
+        elif re.search(r'\bcare\b', q_low):
+            store_type_cond_6 = f" AND upper({BRANCH_NAME_EXPR}) LIKE '%CARE%'"
+            store_scope_lbl_6 = "Care Store"
+            store_branches_lbl_6 = "Care branches"
+        elif re.search(r'\bnormal\b', q_low):
+            store_type_cond_6 = f" AND upper({BRANCH_NAME_EXPR}) NOT LIKE '%FUTURE%' AND upper({BRANCH_NAME_EXPR}) NOT LIKE '%CARE%'"
+            store_scope_lbl_6 = "Normal Store"
+            store_branches_lbl_6 = "Normal branches"
+
+    retail_cond = f"({RETAIL_STORE_FILTER_SQL}){store_type_cond_6} AND coalesce(im.product, '') != 'SCHEME' AND coalesce(im.item_group, '') != 'SCHEME'"
+    need_mob_6 = is_asp_query or (is_compare and bool(prev_date_filter))
+    inv_join_6 = build_inv_mobile_join_sql(date_filter) if need_mob_6 else ""
+    mob_sel_6 = f",\n            uniqExactIf({CUST_MOB_NORM_EXPR}, ({retail_cond}) AND {CUST_MOB_VALID_EXPR}) as retail_uniq_customers" if need_mob_6 else ""
+
     sql = f"""
         SELECT 
             round(sumIf(toFloat64(s.sold_price) * toInt64(s.qty), {retail_cond}), 2) as retail_sales,
@@ -1810,10 +2181,11 @@ def answer_with_nlp(question):
             round(sumIf(toFloat64(s.sold_price) * toInt64(s.qty), NOT ({retail_cond})), 2) as internal_schemes_demo,
             round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as total_sales,
             sum({POS_UNITS_EXPR}) as total_units,
-            count(DISTINCT if(toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as total_invoices
+            count(DISTINCT if(toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as total_invoices{mob_sel_6}
         FROM azure_sales_report s
         LEFT JOIN branch_master bm ON bm.code = s.branch
         LEFT JOIN item_master im ON im.item_code = s.item_code
+        {inv_join_6}
         WHERE {date_filter}
     """
     rows = run_sql(sql)
@@ -1825,23 +2197,28 @@ def answer_with_nlp(question):
         retail_branches = int(float(r.get('retail_branches') or 0))
         internal_amt    = float(r.get('internal_schemes_demo') or 0)
         gross_sales     = float(r.get('total_sales') or 0)
+        uniq_cust_6     = int(float(r.get('retail_uniq_customers') or 0)) if need_mob_6 else 0
 
         # Prefer retail_sales when available, fallback to total_sales
-        main_sales = retail_sales if retail_sales > 0 else gross_sales
-        main_units = retail_units if retail_sales > 0 else int(float(r.get('total_units') or 0))
-        main_inv   = retail_inv if retail_sales > 0 else int(float(r.get('total_invoices') or 0))
+        main_sales = retail_sales if (retail_sales > 0 or store_type_cond_6) else gross_sales
+        main_units = retail_units if (retail_sales > 0 or store_type_cond_6) else int(float(r.get('total_units') or 0))
+        main_inv   = retail_inv if (retail_sales > 0 or store_type_cond_6) else int(float(r.get('total_invoices') or 0))
+        asp_6      = round(main_sales / uniq_cust_6, 2) if uniq_cust_6 > 0 else 0.0
 
-        # Check if user requested a comparison with previous year
+        # Check if user requested a comparison with previous year / date
         if is_compare and prev_date_filter:
+            prev_inv_join_6 = build_inv_mobile_join_sql(prev_date_filter)
             prev_sql = f"""
                 SELECT 
                     round(sumIf(toFloat64(s.sold_price) * toInt64(s.qty), {retail_cond}), 2) as retail_sales,
                     sumIf({POS_UNITS_EXPR}, {retail_cond}) as retail_units,
                     count(DISTINCT if({retail_cond} AND toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as retail_invoices,
-                    count(DISTINCT if({retail_cond}, s.branch, null)) as retail_branches
+                    count(DISTINCT if({retail_cond}, s.branch, null)) as retail_branches,
+                    uniqExactIf({CUST_MOB_NORM_EXPR}, ({retail_cond}) AND {CUST_MOB_VALID_EXPR}) as retail_uniq_customers
                 FROM azure_sales_report s
                 LEFT JOIN branch_master bm ON bm.code = s.branch
                 LEFT JOIN item_master im ON im.item_code = s.item_code
+                {prev_inv_join_6}
                 WHERE {prev_date_filter}
             """
             prev_rows = run_sql(prev_sql)
@@ -1850,33 +2227,55 @@ def answer_with_nlp(question):
             units_prev = int(float(prev_r.get('retail_units') or 0))
             inv_prev = int(float(prev_r.get('retail_invoices') or 0))
             branches_prev = int(float(prev_r.get('retail_branches') or 0))
+            uniq_cust_prev_6 = int(float(prev_r.get('retail_uniq_customers') or 0))
+            asp_prev_6 = round(sales_prev / uniq_cust_prev_6, 2) if uniq_cust_prev_6 > 0 else 0.0
 
             diff_rev = main_sales - sales_prev
             pct_rev = (diff_rev / sales_prev * 100) if sales_prev > 0 else 0
             diff_units = main_units - units_prev
             pct_units = (diff_units / units_prev * 100) if units_prev > 0 else 0
+            diff_asp_6 = round(asp_6 - asp_prev_6, 2)
+            pct_asp_6 = (diff_asp_6 / asp_prev_6 * 100) if asp_prev_6 > 0 else 0
 
             trend_r = f"{format_inr(diff_rev)} ({pct_rev:+.1f}%)"
             trend_u = f"{diff_units:+d} ({pct_units:+.1f}%)"
+            trend_asp_6 = f"{'+' if diff_asp_6 >= 0 else ''}{format_inr_exact(diff_asp_6)} ({pct_asp_6:+.1f}%)"
             growth_word = "growth" if diff_rev >= 0 else "decline"
             r_color = "#059669" if diff_rev >= 0 else "#ef4444"
             u_color = "#059669" if diff_units >= 0 else "#ef4444"
+            asp_color_6 = "#059669" if diff_asp_6 >= 0 else "#ef4444"
 
-            ans = (
-                f"On **{date_label}**, **Retail Store Net Sales** were **{format_inr(main_sales)}** ({format_inr_exact(main_sales)} across {retail_branches} stores), "
-                f"compared to **{format_inr(sales_prev)}** ({format_inr_exact(sales_prev)} across {branches_prev} stores) "
-                f"on **{prev_date_label}** of previous year (**{trend_r} revenue {growth_word}**, {trend_u} units)."
-            )
-            cards = [
-                {"label": f"{date_label} Sales", "value": format_inr(main_sales), "color": "#2563eb"},
-                {"label": f"{prev_date_label} Sales", "value": format_inr(sales_prev), "color": "#6b7280"},
-                {"label": "Revenue Growth (YoY)", "value": trend_r, "color": r_color},
-                {"label": "Unit Growth (YoY)", "value": trend_u, "color": u_color}
-            ]
+            if is_asp_query:
+                ans = (
+                    f"On **{date_label}**, the **Average Selling Price (ASP)** across **{retail_branches} {store_branches_lbl_6}** was "
+                    f"**{format_inr_exact(asp_6)}** (**{format_inr_exact(main_sales)}** total revenue ÷ **{format_units(uniq_cust_6)}** unique customer mobile numbers), "
+                    f"compared to **{format_inr_exact(asp_prev_6)}** (**{format_inr_exact(sales_prev)}** ÷ **{format_units(uniq_cust_prev_6)}** unique customer mobiles) "
+                    f"on **{prev_date_label}** (**{trend_asp_6}** ASP variance)."
+                )
+                cards = [
+                    {"label": f"{date_label} ASP", "value": format_inr_exact(asp_6), "color": "#4f46e5"},
+                    {"label": f"{prev_date_label} ASP", "value": format_inr_exact(asp_prev_6), "color": "#6b7280"},
+                    {"label": "ASP Change", "value": trend_asp_6, "color": asp_color_6},
+                    {"label": "Unique Customers", "value": format_units(uniq_cust_6), "color": "#2563eb"}
+                ]
+            else:
+                ans = (
+                    f"On **{date_label}**, **{store_scope_lbl_6} Net Sales** were **{format_inr(main_sales)}** ({format_inr_exact(main_sales)} across {retail_branches} stores), "
+                    f"compared to **{format_inr(sales_prev)}** ({format_inr_exact(sales_prev)} across {branches_prev} stores) "
+                    f"on **{prev_date_label}** of previous year (**{trend_r} revenue {growth_word}**, {trend_u} units)."
+                )
+                cards = [
+                    {"label": f"{date_label} Sales", "value": format_inr(main_sales), "color": "#2563eb"},
+                    {"label": f"{prev_date_label} Sales", "value": format_inr(sales_prev), "color": "#6b7280"},
+                    {"label": "Revenue Growth (YoY)", "value": trend_r, "color": r_color},
+                    {"label": "Unit Growth (YoY)", "value": trend_u, "color": u_color}
+                ]
             table = {
-                "headers": ["Metric", date_label, prev_date_label, "YoY Variance"],
+                "headers": ["Metric", date_label, prev_date_label, "Variance"],
                 "rows": [
-                    ["Retail Store Sales", format_inr_exact(main_sales), format_inr_exact(sales_prev), trend_r],
+                    ["Avg Selling Price (ASP = Rev ÷ Unique Mobiles)", format_inr_exact(asp_6), format_inr_exact(asp_prev_6), trend_asp_6],
+                    [f"{store_scope_lbl_6} Sales", format_inr_exact(main_sales), format_inr_exact(sales_prev), trend_r],
+                    ["Unique Customer Mobiles", f"{uniq_cust_6:,}", f"{uniq_cust_prev_6:,}", f"{uniq_cust_6 - uniq_cust_prev_6:+d}"],
                     ["Total Units Sold", f"{main_units:,} units", f"{units_prev:,} units", trend_u],
                     ["Customer Invoices", f"{main_inv:,}", f"{inv_prev:,}", f"{main_inv - inv_prev:+d}"],
                     ["Active Branches", f"{retail_branches}", f"{branches_prev}", f"{retail_branches - branches_prev:+d}"]
@@ -1885,9 +2284,135 @@ def answer_with_nlp(question):
             return {
                 "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
                 "suggestions": [
+                    f"Top 5 branches by ASP on {start_date}",
                     f"Which product was most sold on {start_date}?",
-                    f"How much TV was sold on {start_date}?",
                     f"Top branches on {start_date}"
+                ]
+            }
+
+        if is_asp_query:
+            _wp6_asp = f"In **{date_label}**" if is_month else (f"From **{date_label}**" if start_date != end_date else f"On **{date_label}**")
+            if start_date == end_date:
+                cat_asp_sql = f"""
+                    SELECT if({MERCH_CAT_EXPR} = '', 'Other', {MERCH_CAT_EXPR}) as product,
+                           round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue,
+                           {UNIQ_CUST_MOB_EXPR} as uniq_customers,
+                           sum({POS_UNITS_EXPR}) as units,
+                           if({UNIQ_CUST_MOB_EXPR} > 0, round(sum(toFloat64(s.sold_price) * toInt64(s.qty)) / {UNIQ_CUST_MOB_EXPR}, 2), 0) as asp
+                    FROM azure_sales_report s
+                    LEFT JOIN branch_master bm ON bm.code = s.branch
+                    LEFT JOIN item_master im ON im.item_code = s.item_code
+                    {inv_join_6}
+                    WHERE {date_filter}
+                      AND {retail_cond}
+                      AND coalesce(im.product, '') NOT IN ('SMART CHOICE', 'D SPARE', 'SPARE', 'FIXED ASSETS')
+                    GROUP BY product
+                    ORDER BY revenue DESC
+                    LIMIT 5
+                """
+                cat_asp_rows = run_sql(cat_asp_sql) or []
+                t_rows_6 = [[
+                    f"OVERALL {store_scope_lbl_6.upper()}S ({retail_branches} branches)",
+                    format_inr_exact(main_sales),
+                    format_units(uniq_cust_6),
+                    format_units(main_units),
+                    format_inr_exact(asp_6)
+                ]]
+                for cr in cat_asp_rows:
+                    t_rows_6.append([
+                        cr['product'],
+                        format_inr_exact(cr['revenue']),
+                        format_units(cr['uniq_customers']),
+                        format_units(cr['units']),
+                        format_inr_exact(cr['asp'])
+                    ])
+                table_6 = {
+                    "headers": ["Scope / Category", "Total Revenue", "Unique Customer Mobiles", "Units Sold", "ASP (Rev ÷ Unique Customers)"],
+                    "rows": t_rows_6
+                }
+                ans = (
+                    f"{_wp6_asp}, the **Average Selling Price (ASP)** across **{retail_branches} {store_branches_lbl_6}** was "
+                    f"**{format_inr_exact(asp_6)}**, calculated as **Total Revenue of {format_inr_exact(main_sales)}** (**{format_inr(main_sales)}**) "
+                    f"divided by **{format_units(uniq_cust_6)} unique customer mobile numbers** purchased on that day "
+                    f"(**{format_units(main_units)} units** sold across **{format_units(main_inv)} customer invoices**)."
+                )
+            else:
+                try:
+                    span_6 = (datetime.strptime(end_date, '%Y-%m-%d') - datetime.strptime(start_date, '%Y-%m-%d')).days + 1
+                except Exception:
+                    span_6 = 30
+                grp_dt_6 = "toString(toDate(s.date))" if span_6 <= 31 else "toString(toStartOfMonth(toDate(s.date)))"
+                d_sql_6 = f"""
+                    SELECT {grp_dt_6} as period_dt,
+                           round(sumIf(toFloat64(s.sold_price) * toInt64(s.qty), {retail_cond}), 2) as revenue,
+                           uniqExactIf({CUST_MOB_NORM_EXPR}, ({retail_cond}) AND {CUST_MOB_VALID_EXPR}) as uniq_customers,
+                           sumIf({POS_UNITS_EXPR}, {retail_cond}) as units,
+                           if(uniqExactIf({CUST_MOB_NORM_EXPR}, ({retail_cond}) AND {CUST_MOB_VALID_EXPR}) > 0,
+                              round(sumIf(toFloat64(s.sold_price) * toInt64(s.qty), {retail_cond}) / uniqExactIf({CUST_MOB_NORM_EXPR}, ({retail_cond}) AND {CUST_MOB_VALID_EXPR}), 2),
+                              0) as asp
+                    FROM azure_sales_report s
+                    LEFT JOIN branch_master bm ON bm.code = s.branch
+                    LEFT JOIN item_master im ON im.item_code = s.item_code
+                    {inv_join_6}
+                    WHERE {date_filter}
+                    GROUP BY period_dt
+                    HAVING revenue > 0
+                    ORDER BY period_dt DESC
+                    LIMIT 31
+                """
+                d_rows_6 = run_sql(d_sql_6) or []
+                t_rows_6 = [[
+                    f"OVERALL PERIOD ({retail_branches} branches)",
+                    format_inr_exact(main_sales),
+                    format_units(uniq_cust_6),
+                    format_units(main_units),
+                    format_inr_exact(asp_6)
+                ]]
+                for dr in d_rows_6:
+                    t_rows_6.append([
+                        dr['period_dt'],
+                        format_inr_exact(dr['revenue']),
+                        format_units(dr['uniq_customers']),
+                        format_units(dr['units']),
+                        format_inr_exact(dr['asp'])
+                    ])
+                table_6 = {
+                    "headers": ["Date" if span_6 <= 31 else "Month", "Total Revenue", "Unique Customer Mobiles", "Units Sold", "ASP (Rev ÷ Unique Customers)"],
+                    "rows": t_rows_6
+                }
+                ans = (
+                    f"{_wp6_asp}, the **Average Selling Price (ASP)** across **{retail_branches} {store_branches_lbl_6}** was "
+                    f"**{format_inr_exact(asp_6)}**, calculated as **Total Revenue of {format_inr_exact(main_sales)}** (**{format_inr(main_sales)}**) "
+                    f"divided by **{format_units(uniq_cust_6)} unique customer mobile numbers** purchased during the period "
+                    f"(**{format_units(main_units)} units** sold across **{format_units(main_inv)} customer invoices**). "
+                    f"Each day's exact daily ASP (`Total Revenue of that Day ÷ Total Unique Customer Mobiles Purchased on that Day`) is listed below."
+                )
+
+            sql_display_6 = f"""SELECT
+    round(sumIf(toFloat64(s.sold_price) * toInt64(s.qty), {retail_cond}), 2) AS total_revenue,
+    uniqExactIf({CUST_MOB_NORM_EXPR}, ({retail_cond}) AND {CUST_MOB_VALID_EXPR}) AS unique_customer_mobiles,
+    if(uniqExactIf({CUST_MOB_NORM_EXPR}, ({retail_cond}) AND {CUST_MOB_VALID_EXPR}) > 0,
+       round(sumIf(toFloat64(s.sold_price) * toInt64(s.qty), {retail_cond}) / uniqExactIf({CUST_MOB_NORM_EXPR}, ({retail_cond}) AND {CUST_MOB_VALID_EXPR}), 2),
+       0) AS asp
+FROM azure_sales_report s
+LEFT JOIN branch_master bm ON bm.code = s.branch
+LEFT JOIN item_master im ON im.item_code = s.item_code
+{inv_join_6}
+WHERE {date_filter}"""
+            cards = [
+                {"label": "ASP (Avg Selling Price)", "value": format_inr_exact(asp_6), "color": "#4f46e5"},
+                {"label": f"{store_scope_lbl_6} Sales", "value": format_inr(main_sales), "color": "#059669"},
+                {"label": "Unique Customers", "value": format_units(uniq_cust_6), "color": "#2563eb"},
+                {"label": "Active Stores", "value": format_units(retail_branches), "color": "#d97706"}
+            ]
+            sugg_dt = "this month" if "This Month" in date_label else start_date
+            return {
+                "answer": ans, "sql": sql_display_6.strip(), "cards": cards, "table": table_6,
+                "suggestions": [
+                    f"Top 5 Future stores by ASP on {sugg_dt}",
+                    f"What is the ASP of Mobile on {sugg_dt}?",
+                    f"Compare ASP on {start_date} with previous year",
+                    f"What was the total sale on {start_date}?"
                 ]
             }
 
@@ -1925,8 +2450,8 @@ def answer_with_nlp(question):
         return {
             "answer": ans, "sql": sql.strip(), "cards": cards,
             "suggestions": [
+                f"What was the ASP on {start_date}?",
                 f"Which product was most sold on {start_date}?",
-                f"How much TV was sold on {start_date}?",
                 f"How much Mobile was sold on {start_date}?",
                 f"Top branches on {start_date}"
             ]
@@ -1953,13 +2478,17 @@ def ask_ai(question, history=None):
     # Follow-up such as "give as an excel report": re-run the previous user question so its Excel download is returned
     _ql = (question or '').lower()
     if (history and len(_ql.split()) <= 10 and re.search(r'\b(excel|xlsx|spreadsheet|download|export)\b', _ql)
-            and not re.search(r'\b(store|branch|future|sale|sales|campaign)\b', _ql)):
+            and not re.search(r'\b(store|branch|future|sale|sales|campaign|asp)\b', _ql)):
         _prev = [h.get('content', '') for h in history if h.get('role') == 'user'
                  and not re.search(r'\b(excel|xlsx|spreadsheet|download|export)\b', (h.get('content') or '').lower())]
         if _prev:
             _res = answer_with_nlp(_prev[-1])
             if isinstance(_res, dict) and _res.get('download'):
                 return _res
+    # Route ASP (Average Selling Price) queries directly through our deterministic ClickHouse engine
+    # so the mandatory formula (Total Revenue / Unique Customer Mobile Numbers Purchased) + KPI cards & breakdown table are always exact.
+    if re.search(r'\basp\b|average\s+selling\s+price|avg\.?\s+selling\s+price|per\s+customer\s+(?:revenue|sale|sales|spend|value)|revenue\s+per\s+customer', _ql):
+        return answer_with_nlp(question)
     gemini_key = os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY')
     if gemini_key:
         try:
@@ -1980,11 +2509,13 @@ def ask_gemini(question, api_key, history=None):
     ClickHouse Schema:
     1. Table: azure_sales_report (alias s)
        Columns: date (Date/DateTime), invoice_no, branch, item_code, qty, sold_price (String/Float), discount, taxable
-    2. Table: item_master (alias im)
+    2. Table: azure_invoice_report (alias i)
+       Columns: date (Date/DateTime), invoice_no, branch, customer_mobile, invoice_total
+    3. Table: item_master (alias im)
        Columns: item_code, product (e.g. TV, MOBILE, LAPTOP, REFRIGERATORS, WASHING MACHINES, AIR CONDITIONER), brand, category, item_name
-    3. Table: branch_master (alias bm)
+    4. Table: branch_master (alias bm)
        Columns: code, branch_name
-    4. Table: campaign_dashboard_campaigns (source_db = 'root')
+    5. Table: campaign_dashboard_campaigns (source_db = 'root')
        Columns: id, campaign_name, type, start_date, end_date, target_size, purchase_count, purchase_value, roi, conversion_rate
        
     Rules:
@@ -1994,6 +2525,7 @@ def ask_gemini(question, api_key, history=None):
     - Keep 'AC OUTDOOR' in store/AC revenue (do NOT filter out AC OUTDOOR in WHERE), but exclude AC OUTDOOR from unit counts
     - For store/category revenue use: round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2)
     - For net physical units use: sum(if(coalesce(im.product,'')='AC OUTDOOR' OR lower(coalesce(im.item_name,'')) LIKE 'o/d%', 0, if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), if(toFloat64(s.sold_price) < 0, 0, toInt64(s.qty)))))
+    - Average Selling Price (ASP) MUST ALWAYS be calculated as: Total Net Revenue / Total Unique Customer Mobile Numbers Purchased on that Day (joining azure_invoice_report on branch & invoice_no and counting uniqExactIf(right(replaceRegexpAll(toString(i.customer_mobile), '[^0-9]', ''), 10), length(replaceRegexpAll(toString(i.customer_mobile), '[^0-9]', '')) >= 10 AND s.invoice_no NOT LIKE '%-SR-%' AND toFloat64(s.sold_price) > 0)). NEVER divide by units or invoice count for ASP.
     - Limit results to at most 10 rows
     """ + (
         f"\n    Context: Today (IST) is {(datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%Y-%m-%d')} "
