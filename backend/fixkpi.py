@@ -49,33 +49,84 @@ def query_clickhouse(sql):
     except Exception as e:
         print(f"  ClickHouse ERROR: {e}", flush=True); return []
 
+_SUPPLEMENTAL_BRANCHES = [
+    {'code': 'GPF', 'branch_name': 'GUNDLUPETE FUTURE'},
+    {'code': 'MLF', 'branch_name': 'MALAPPURAM FUTURE'},
+]
+
+def _is_chainwide_campaign(camp_name, camp_group=''):
+    combined = f"{camp_name or ''} {camp_group or ''}".lower()
+    if 'all kerala' in combined:
+        return True
+    if 'future' in (camp_name or '').lower():
+        return False
+    chain_markers = ('home & digital', 'navarathri', 'onam climax', 'price challenge', 'price challenege', 'loyalty poin')
+    return any(m in combined for m in chain_markers)
+
 _CH_BRANCHES = None
 def get_ch_branches():
     global _CH_BRANCHES
     if _CH_BRANCHES is None:
-        _CH_BRANCHES = query_clickhouse("SELECT code, branch_name FROM branch_master")
+        rows = query_clickhouse("SELECT code, branch_name FROM branch_master") or []
+        existing = {str(r.get('code', '')).strip().upper() for r in rows}
+        for sb in _SUPPLEMENTAL_BRANCHES:
+            if sb['code'] not in existing:
+                rows.append(dict(sb))
+        _CH_BRANCHES = rows
     return _CH_BRANCHES or []
 
-def resolve_branch_dynamic(camp_name):
-    if not camp_name or 'all kerala' in camp_name.lower():
+def resolve_branch_dynamic(camp_name, camp_id=None, start_dt='', end_dt='', camp_group=''):
+    if not camp_name or _is_chainwide_campaign(camp_name, camp_group):
         return ''
-    clean = re.sub(r'[^a-z0-9]', '', camp_name.lower())
+    norm_name = (camp_name.lower()
+                 .replace('mannarkkad', 'mannarkad')
+                 .replace('gundlupet ', 'gundlupete ')
+                 .replace('gundalpet', 'gundlupete'))
+    if norm_name.endswith('gundlupet'):
+        norm_name = norm_name[:-9] + 'gundlupete'
+    clean = re.sub(r'[^a-z0-9]', '', norm_name)
     b = BRANCH_MAP.get(clean)
     if b: return b
-    first_word = re.sub(r'[^a-z]', '', camp_name.lower().split()[0])
+    first_word = re.sub(r'[^a-z]', '', norm_name.split()[0])
     b = BRANCH_MAP.get(first_word)
     if b: return b
     
-    # Dynamic ClickHouse branch_master resolution for newly opened stores
+    # Dynamic ClickHouse branch_master (+ supplemental) resolution
     branches = get_ch_branches()
-    has_future = 'future' in camp_name.lower()
-    words = [w for w in re.findall(r'[a-zA-Z]{3,}', camp_name.lower()) 
-             if w not in {'future','store','digital','sale','offer','offers','campaign','special','support','data','august','september','october','inauguration'}]
+    has_future = 'future' in norm_name
+    words = [w for w in re.findall(r'[a-zA-Z]{3,}', norm_name) 
+             if w not in {'future','store','digital','sale','offer','offers','campaign','special','support','data','august','september','october','november','december','inauguration','competitor','cambuzz','dussehra','diwali'}]
     for w in words:
         for br in branches:
             bname = br.get('branch_name','').lower()
+            if 'godown' in bname or 'warehouse' in bname:
+                continue
             if w in bname and ('future' in bname) == has_future:
                 return br.get('code','')
+
+    # Read-only auto-discovery for brand-new POS stores not yet in branch_master
+    non_retail = "('SMC','3GH','CSB','TMC','RDS','MCL3','HAC','ECO','KSO','MRK','VSP')"
+    if camp_id and start_dt:
+        sd, ed = str(start_dt)[:10], str(end_dt or start_dt)[:10]
+        rows = query_clickhouse(f"""
+            SELECT branch, uniqExact(customer_mobile) AS buyers
+            FROM azure_invoice_report
+            WHERE toDate(date) >= '{sd}' AND toDate(date) <= '{ed}'
+              AND branch != ''
+              AND branch NOT IN (SELECT code FROM branch_master)
+              AND branch NOT IN {non_retail}
+              AND customer_mobile IN (
+                  SELECT customer_mobile FROM {T_CUST}
+                  WHERE source_db = '{SRC}' AND campaign_id = {int(camp_id)}
+              )
+            GROUP BY branch ORDER BY buyers DESC LIMIT 3
+        """)
+        if rows:
+            top_b = str(rows[0].get('branch') or '').strip()
+            top_cnt = int(rows[0].get('buyers') or 0)
+            tot_cnt = sum(int(r.get('buyers') or 0) for r in rows)
+            if top_b and top_cnt >= 5 and (tot_cnt == 0 or top_cnt / tot_cnt >= 0.6):
+                return top_b
     return ''
 
 def _differs(old, new):
@@ -196,16 +247,28 @@ for camp in camps:
     branch       = camp['branch_code'] or ''
     sms_delivered = camp['target_size'] or 0
     
+    camp_group = camp.get('campaign_group') or ''
+    branch_just_resolved = False
+    if not branch:
+        branch = resolve_branch_dynamic(camp_name, camp_id=camp_id, start_dt=start_dt, end_dt=end_dt, camp_group=camp_group)
+        if branch:
+            _update_if_changed(camp, {'branch_code': branch})
+            branch_just_resolved = True
+
+    if not branch and "mavoor road" not in camp_name.lower() and not _is_chainwide_campaign(camp_name, camp_group):
+        print(f"[{camp_id}] {camp_name}: store POS branch not yet resolved — skipping All-Kerala fallback.", flush=True)
+        continue
+
     p_cnt = int(camp['purchase_count'] or 0)
     n_cnt = int(camp['new_customers'] or 0)
     e_cnt = int(camp['existing_customers'] or 0)
     
     last_kpi_ts = float(kpi_refreshed.get(f"{KPI_TS_PREFIX}{camp_id}", 0) or 0)
-    if p_cnt == 0 and last_kpi_ts > 0 and (time.time() - last_kpi_ts) < LIVE_REFRESH_MINUTES * 60:
+    if not branch_just_resolved and p_cnt == 0 and last_kpi_ts > 0 and (time.time() - last_kpi_ts) < LIVE_REFRESH_MINUTES * 60:
         # Already checked recently with 0 POS matches; re-check every LIVE_REFRESH_MINUTES as POS invoices arrive
         continue
 
-    if p_cnt > 0 and (n_cnt + e_cnt) == p_cnt and not _needs_live_refresh(camp):
+    if not branch_just_resolved and p_cnt > 0 and (n_cnt + e_cnt) == p_cnt and not _needs_live_refresh(camp):
         # Reconcile conversion rate & ROI with latest sheet values (budget & sms_delivered)
         conv_rate = (p_cnt / sms_delivered * 100) if sms_delivered > 0 else 0
         p_val = float(camp['purchase_value'] or 0)
@@ -214,11 +277,6 @@ for camp in camps:
                                   'budget': float(budget), 'target_size': int(sms_delivered)})
         print(f"[{camp_id}] {camp_name} is already processed. Updated conv/roi. Skipping heavy attribution...", flush=True)
         continue
-
-    if not branch:
-        branch = resolve_branch_dynamic(camp_name)
-        if branch:
-            _update_if_changed(camp, {'branch_code': branch})
 
     print(f"\n[{camp_id}] {camp_name} | {camp['type']} | {start_dt}→{end_dt} | branch={branch} | SMS Delivered={sms_delivered}", flush=True)
 

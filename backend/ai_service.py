@@ -621,8 +621,16 @@ def get_branch_map():
     if _BRANCH_MAP_CACHE is not None:
         return _BRANCH_MAP_CACHE
     try:
-        rows = run_sql("SELECT code, branch_name FROM branch_master")
-        b_map = {}
+        rows = run_sql("SELECT code, branch_name FROM branch_master") or []
+        existing_codes = {str(r.get('code', '')).strip().upper() for r in rows}
+        for sb_code, sb_name in [('GPF', 'GUNDLUPETE FUTURE'), ('MLF', 'MALAPPURAM FUTURE')]:
+            if sb_code not in existing_codes:
+                rows.append({'code': sb_code, 'branch_name': sb_name})
+        b_map = {
+            'GUNDLUPET FUTURE': ('GPF', 'GUNDLUPETE FUTURE'),
+            'GUNDLUPET': ('GPF', 'GUNDLUPETE FUTURE'),
+            'GUNDALPET': ('GPF', 'GUNDLUPETE FUTURE'),
+        }
         for r in rows:
             code = r['code'].strip()
             name = r['branch_name'].strip()

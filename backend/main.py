@@ -284,7 +284,7 @@ def _sync_campaign_master():
             # Extract actual campaign start & end dates from Campaign Group name
             start_date, end_date = parse_campaign_group_dates(camp_group, sheet_date, sheet_tab)
 
-            b_code, b_name = resolve_branch_from_clickhouse(camp_name)
+            b_code, b_name = resolve_branch_from_clickhouse(camp_name, start_date=start_date, end_date=end_date, campaign_group=camp_group)
 
             # Robust lookup: Match by (sl_no, sheet_tab) if available, or by name + type + group/date
             existing = None
@@ -788,37 +788,123 @@ def _sync_campaign_data():
 # Preload branch map at startup
 _CH_BRANCHES_CACHE = None
 
+# Newly inaugurated POS stores that may not yet have a row in ClickHouse branch_master
+_SUPPLEMENTAL_BRANCHES = [
+    {'code': 'GPF', 'branch_name': 'GUNDLUPETE FUTURE', 'district': 'Chamarajanagar'},
+    {'code': 'MLF', 'branch_name': 'MALAPPURAM FUTURE', 'district': 'Malappuram'},
+]
+
+def _is_chainwide_campaign(campaign_name, campaign_group=''):
+    combined = f"{campaign_name or ''} {campaign_group or ''}".lower()
+    if 'all kerala' in combined:
+        return True
+    if 'future' in (campaign_name or '').lower():
+        return False
+    chain_markers = ('home & digital', 'navarathri', 'onam climax', 'price challenge', 'price challenege', 'loyalty poin')
+    return any(m in combined for m in chain_markers)
+
 def get_clickhouse_branches():
-    """Load and cache all official stores from ClickHouse branch_master."""
+    """Load and cache all official stores from ClickHouse branch_master + newly opened POS stores."""
     global _CH_BRANCHES_CACHE
     if _CH_BRANCHES_CACHE is None:
         try:
             sql = "SELECT code, branch_name, district FROM branch_master"
-            _CH_BRANCHES_CACHE = query_clickhouse(sql)
-            print(f"[CLICKHOUSE] Cached {len(_CH_BRANCHES_CACHE)} stores from branch_master.")
+            rows = query_clickhouse(sql) or []
+            existing_codes = {str(r.get('code', '')).strip().upper() for r in rows}
+            for sb in _SUPPLEMENTAL_BRANCHES:
+                if sb['code'] not in existing_codes:
+                    rows.append(dict(sb))
+            _CH_BRANCHES_CACHE = rows
+            print(f"[CLICKHOUSE] Cached {len(_CH_BRANCHES_CACHE)} stores (branch_master + supplemental).")
         except Exception as e:
             print(f"[CLICKHOUSE ERROR] Failed to load branch_master: {e}")
-            _CH_BRANCHES_CACHE = []
+            _CH_BRANCHES_CACHE = [dict(sb) for sb in _SUPPLEMENTAL_BRANCHES]
     return _CH_BRANCHES_CACHE
 
-def resolve_branch_from_clickhouse(campaign_name):
+_DISCOVERED_BRANCH_CACHE = {}
+
+def _auto_discover_unmapped_branch(campaign_name, campaign_id=None, start_date='', end_date='', campaign_group=''):
+    """Read-only auto-discovery for brand-new POS stores not yet added to branch_master."""
+    if not campaign_name or _is_chainwide_campaign(campaign_name, campaign_group):
+        return '', ''
+    cache_key = (str(campaign_name).strip().lower(), int(campaign_id or 0), str(start_date)[:10])
+    if cache_key in _DISCOVERED_BRANCH_CACHE:
+        return _DISCOVERED_BRANCH_CACHE[cache_key]
+
+    non_retail = "('SMC','3GH','CSB','TMC','RDS','MCL3','HAC','ECO','KSO','MRK','VSP')"
+    # Signal 1: Dominant unmapped POS branch where this campaign's target customers actually purchased
+    if campaign_id and start_date:
+        sd = str(start_date)[:10]
+        ed = str(end_date or start_date)[:10]
+        disc_sql = f"""
+            SELECT branch, uniqExact(customer_mobile) AS buyers
+            FROM azure_invoice_report
+            WHERE toDate(date) >= '{sd}' AND toDate(date) <= '{ed}'
+              AND branch != ''
+              AND branch NOT IN (SELECT code FROM branch_master)
+              AND branch NOT IN {non_retail}
+              AND customer_mobile IN (
+                  SELECT customer_mobile FROM {ch_db.T_CUST}
+                  WHERE source_db = '{ch_db.SRC}' AND campaign_id = {int(campaign_id)}
+              )
+            GROUP BY branch
+            ORDER BY buyers DESC
+            LIMIT 3
+        """
+        rows = query_clickhouse(disc_sql)
+        if rows:
+            top_b = str(rows[0].get('branch') or '').strip()
+            top_cnt = int(rows[0].get('buyers') or 0)
+            tot_cnt = sum(int(r.get('buyers') or 0) for r in rows)
+            if top_b and top_cnt >= 5 and (tot_cnt == 0 or top_cnt / tot_cnt >= 0.6):
+                res = (top_b, campaign_name.strip().upper())
+                _DISCOVERED_BRANCH_CACHE[cache_key] = res
+                return res
+
+    # Signal 2: Unmapped Future branch code initials match (e.g. 'Gundlupete Future' -> 'GPF')
+    words = [w for w in re.findall(r'[a-zA-Z]{3,}', campaign_name.lower()) if w not in {'future', 'store', 'digital', 'offer', 'offers', 'sale', 'inauguration'}]
+    if words and 'future' in campaign_name.lower():
+        town = words[0]
+        sd = str(start_date)[:10] if start_date else '2026-08-01'
+        cand_rows = query_clickhouse(f"""
+            SELECT DISTINCT branch FROM azure_sales_report
+            WHERE toDate(date) >= '{sd}'
+              AND branch NOT IN (SELECT code FROM branch_master)
+              AND branch NOT IN {non_retail}
+        """)
+        cands = []
+        for r in cand_rows:
+            bc = str(r.get('branch') or '').strip().upper()
+            if len(bc) == 3 and bc.endswith('F') and bc[0] == town[0].upper() and bc[1].lower() in town[1:]:
+                cands.append(bc)
+        if len(cands) == 1:
+            res = (cands[0], campaign_name.strip().upper())
+            _DISCOVERED_BRANCH_CACHE[cache_key] = res
+            return res
+
+    return '', ''
+
+def resolve_branch_from_clickhouse(campaign_name, campaign_id=None, start_date='', end_date='', campaign_group=''):
     """
-    Dynamically resolve store code & name from ClickHouse branch_master.
-    No hardcoded manual lists. Single source of truth.
+    Dynamically resolve store code & name from ClickHouse branch_master (+ supplemental/new POS discovery).
     Strict enforcement of 'Future' vs normal stores.
     """
-    if not campaign_name:
+    if not campaign_name or _is_chainwide_campaign(campaign_name, campaign_group):
         return '', ''
     branches = get_clickhouse_branches()
-    name_clean = campaign_name.lower().replace('mannarkkad', 'mannarkad')
+    name_clean = (campaign_name.lower()
+                  .replace('mannarkkad', 'mannarkad')
+                  .replace('gundlupet ', 'gundlupete ')
+                  .replace('gundalpet', 'gundlupete'))
+    if name_clean.endswith('gundlupet'):
+        name_clean = name_clean[:-9] + 'gundlupete'
     has_future = 'future' in name_clean
     
     words = re.findall(r'[a-zA-Z]{3,}', name_clean)
-    skip_words = {'onam', 'offers', 'offer', 'campaign', 'special', 'support', 'august', 'freedom', 'sale', 'inauguration', 'split', 'voice', 'wtsp', 'whatsapp', 'call', 'rcs', 'future', 'digital', 'store', 'godown', 'all', 'kerala', 'basis'}
+    skip_words = {'onam', 'offers', 'offer', 'campaign', 'special', 'support', 'august', 'september', 'october', 'november', 'december', 'freedom', 'sale', 'inauguration', 'competitor', 'cambuzz', 'dussehra', 'diwali', 'split', 'voice', 'wtsp', 'whatsapp', 'call', 'rcs', 'sms', 'future', 'digital', 'store', 'godown', 'all', 'kerala', 'basis'}
     keywords = [w for w in words if w not in skip_words]
 
     for kw in keywords:
-        # Match against branch_name in ClickHouse (prefer retail stores, not godown/warehouse)
         matches = [
             b for b in branches 
             if kw in b['branch_name'].lower() 
@@ -830,13 +916,20 @@ def resolve_branch_from_clickhouse(campaign_name):
             exact = [b for b in matches if re.search(r'\b' + kw + r'\b', b['branch_name'].lower())]
             match = exact[0] if exact else matches[0]
             return match['code'], match['branch_name']
-    return '', ''
 
-def _resolve_branch(campaign_name, branch_code):
-    """Return branch code from DB field or dynamically infer from ClickHouse branch_master."""
+    return _auto_discover_unmapped_branch(campaign_name, campaign_id, start_date, end_date, campaign_group)
+
+def _resolve_branch(campaign_name, branch_code, campaign_id=None, start_date='', end_date='', campaign_group=''):
+    """Return branch code from DB field or dynamically infer from ClickHouse branch_master / POS."""
     if branch_code and branch_code.strip():
-        return branch_code.strip(), ''
-    return resolve_branch_from_clickhouse(campaign_name)
+        bc = branch_code.strip()
+        bname = ''
+        for b in get_clickhouse_branches():
+            if b['code'] == bc:
+                bname = b['branch_name']
+                break
+        return bc, bname
+    return resolve_branch_from_clickhouse(campaign_name, campaign_id, start_date, end_date, campaign_group)
 
 @app.route('/favicon.ico')
 def favicon():
@@ -862,14 +955,24 @@ def get_campaign_store_sales(campaign_id):
         start_date = (camp.get('start_date') or '')[:10]
         end_date   = (camp.get('end_date')   or start_date)[:10]
 
-        # Dynamically resolve branch code and name directly from ClickHouse branch_master
-        branch, branch_name = _resolve_branch(camp.get('campaign_name',''), camp.get('branch_code',''))
+        # Dynamically resolve branch code and name directly from ClickHouse branch_master / POS
+        branch, branch_name = _resolve_branch(
+            camp.get('campaign_name',''), camp.get('branch_code',''),
+            campaign_id=camp.get('id'), start_date=start_date, end_date=end_date,
+            campaign_group=camp.get('campaign_group','')
+        )
 
         if branch == '':
-            display_name = 'All Stores (Kerala)'
-            branch_cond_s = "1=1"
-            branch_cond = "1=1"
-            branch_cond_full = "1=1"
+            if _is_chainwide_campaign(camp.get('campaign_name',''), camp.get('campaign_group','')):
+                display_name = 'All Stores (Kerala)'
+                branch_cond_s = "1=1"
+                branch_cond = "1=1"
+                branch_cond_full = "1=1"
+            else:
+                display_name = f"{camp.get('campaign_name','Store')} (POS Branch Pending)"
+                branch_cond_s = "1=0"
+                branch_cond = "1=0"
+                branch_cond_full = "1=0"
         else:
             # Nice display title for known store names
             display_name = branch_name
@@ -1080,13 +1183,17 @@ def get_brand_breakdown(campaign_id):
         return {'detail': 'Campaign not found'}
     start_date = (camp.get('start_date') or '')[:10]
     end_date   = (camp.get('end_date')   or start_date)[:10]
-    branch, branch_name = _resolve_branch(camp.get('campaign_name',''), camp.get('branch_code',''))
+    branch, branch_name = _resolve_branch(
+        camp.get('campaign_name',''), camp.get('branch_code',''),
+        campaign_id=camp.get('id'), start_date=start_date, end_date=end_date,
+        campaign_group=camp.get('campaign_group','')
+    )
 
     product = (request.query.get('product', 'TV') or 'TV').strip()
     norm_product = product.upper()
 
     if branch == '':
-        branch_cond_s = "1=1"
+        branch_cond_s = "1=1" if _is_chainwide_campaign(camp.get('campaign_name',''), camp.get('campaign_group','')) else "1=0"
     else:
         branch_cond_s = f"s.branch = '{branch}'"
         if "mavoor road" in camp.get('campaign_name', '').lower():
@@ -1256,7 +1363,11 @@ def get_campaign_incremental_lift(campaign_id):
         return {'detail': 'Campaign not found'}
     start_date_str = (camp.get('start_date') or '')[:10]
     end_date_str   = (camp.get('end_date')   or start_date_str)[:10]
-    branch, branch_name = _resolve_branch(camp.get('campaign_name',''), camp.get('branch_code',''))
+    branch, branch_name = _resolve_branch(
+        camp.get('campaign_name',''), camp.get('branch_code',''),
+        campaign_id=camp.get('id'), start_date=start_date_str, end_date=end_date_str,
+        campaign_group=camp.get('campaign_group','')
+    )
 
     if not start_date_str:
         return {'days': [], 'error': 'Campaign dates could not be resolved'}
@@ -1290,7 +1401,7 @@ def get_campaign_incremental_lift(campaign_id):
     base_end_str   = base_end.strftime('%Y-%m-%d')
 
     if branch == '':
-        branch_cond_s = "1=1"
+        branch_cond_s = "1=1" if _is_chainwide_campaign(camp.get('campaign_name',''), camp.get('campaign_group','')) else "1=0"
     else:
         branch_cond_s = f"s.branch = '{branch}'"
         if "mavoor road" in (camp.get('campaign_name') or '').lower():
