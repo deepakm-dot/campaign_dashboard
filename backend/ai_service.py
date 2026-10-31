@@ -43,8 +43,15 @@ def format_inr(val):
 def format_inr_exact(val):
     if val is None:
         return '₹0'
-    val = round(float(val))
-    s = str(abs(val))
+    fval = round(float(val), 2)
+    neg = fval < 0
+    abs_val = abs(fval)
+    int_part = int(abs_val)
+    dec_part = int(round((abs_val - int_part) * 100))
+    if dec_part >= 100:
+        int_part += 1
+        dec_part -= 100
+    s = str(int_part)
     if len(s) <= 3:
         formatted = s
     else:
@@ -57,7 +64,9 @@ def format_inr_exact(val):
         if rest:
             groups.insert(0, rest)
         formatted = ','.join(groups) + ',' + last3
-    prefix = '-₹' if val < 0 else '₹'
+    if dec_part > 0:
+        formatted = f"{formatted}.{dec_part:02d}"
+    prefix = '-₹' if (neg and (int_part > 0 or dec_part > 0)) else '₹'
     return prefix + formatted
 
 def format_units(val):
@@ -395,9 +404,54 @@ _EXCL_CATS = ("'SCHEME','AC OUTDOOR','D SPARE','SPARE','GDP-SPARE','FIXED ASSETS
               "'STATIONERY ITEMS','GIFT ITEMS','OFFER KIT','FOC','SERVICE','SERVICE CHARGES','OSG WARRANTY',"
               "'CARE PLUS','LG AMC','GDOT CARE','TOTAL SECURITY','MOBILE ANTIVIRUS','CEGI','SMART CHOICE'")
 
-PROD_EXPR = ("if(coalesce(im.product,'')='', multiIf(s.item_code LIKE 'MOB%','MOBILE', s.item_code LIKE 'TV%','TV', "
-             "s.item_code LIKE 'LAP%','LAPTOP', (s.item_code LIKE 'AC%' AND abs(toFloat64(s.sold_price))>=1000),'AIR CONDITIONER', (s.item_code LIKE 'WSM%' OR s.item_code LIKE 'WM%'),'WASHING MACHINES', "
-             "s.item_code LIKE 'REF%','REFRIGERATORS',''), im.product)")
+NON_RETAIL_BRANCHES_SQL = "('SMC','3GH','CSB','TMC','RDS','MCL3','HAC','ECO','KSO','MRK','VSP')"
+
+BRANCH_NAME_EXPR = ("multiIf(s.branch = 'GPF', 'GUNDLUPETE FUTURE', "
+                    "s.branch = 'MLF', 'MALAPPURAM FUTURE', "
+                    "coalesce(nullIf(trim(bm.branch_name), ''), s.branch))")
+
+RETAIL_STORE_FILTER_SQL = (
+    f"s.branch NOT IN {NON_RETAIL_BRANCHES_SQL} "
+    f"AND positionCaseInsensitive({BRANCH_NAME_EXPR}, 'GODOWN') = 0 "
+    f"AND positionCaseInsensitive({BRANCH_NAME_EXPR}, 'WAREHOUSE') = 0"
+)
+
+# Exact POS product classification: falls back to exact alphabetic SKU prefix ONLY when im.product is empty
+PROD_EXPR = (
+    "if(coalesce(im.product, '') != '', im.product, "
+    "multiIf("
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'MOB', 'MOBILE', "
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'TV', 'TV', "
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'LAP', 'LAPTOP', "
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) IN ('WSM', 'WM'), 'WASHING MACHINES', "
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'REF', 'REFRIGERATORS', "
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'TAB', 'TABLET', "
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'AC' AND abs(toFloat64(s.sold_price)) >= 1000, 'AIR CONDITIONER', "
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'AC' AND abs(toFloat64(s.sold_price)) < 100, 'AC OUTDOOR', "
+    "''))"
+)
+
+# Companion AC outdoor units / cassette panels carry real invoice revenue (e.g. Daikin Cassette O/D & panels)
+# so they MUST stay in revenue, while contributing 0 extra physical AC units (the Indoor Unit row counts the AC unit).
+IS_AC_OUTDOOR_EXPR = (
+    f"(({PROD_EXPR}) = 'AC OUTDOOR' "
+    "OR lower(coalesce(im.item_category, '')) = 'ac outdoor' "
+    "OR lower(coalesce(im.item_name, '')) LIKE 'o/d%')"
+)
+
+# POS-reconciled net physical units:
+# - Sales return invoices ('%-SR-%') subtract returned units
+# - Negative-price lines on normal '-I-' invoices (SMART CHOICE 'SC*' customer trade-in deductions) count as 0 units (never -1!)
+# - Companion AC outdoor units count as 0 units
+POS_UNITS_EXPR = (
+    f"if({IS_AC_OUTDOOR_EXPR}, 0, "
+    "if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), "
+    "if(toFloat64(s.sold_price) < 0, 0, toInt64(s.qty))))"
+)
+
+# For category breakdowns where AC OUTDOOR revenue belongs under AIR CONDITIONER
+MERCH_CAT_EXPR = f"if({IS_AC_OUTDOOR_EXPR}, 'AIR CONDITIONER', {PROD_EXPR})"
+
 
 # Only these product categories are considered in quarterly/period comparisons and insights
 FOCUS_CATS = ['CROCKERY', 'MOBILE', 'SMALL APPLIANCES', 'ACCESSORIES', 'FRAGRANCE', 'TV', 'WASHING MACHINES',
@@ -423,13 +477,11 @@ def quarterly_insights(period_a, period_b, branch_code=None, branch_name=None, p
     in_a = f"toDate(s.date) BETWEEN '{d_a}' AND '{d_a_end}'"
     in_b = f"toDate(s.date) BETWEEN '{d_b}' AND '{d_b_end}'"
     in_a_plain = in_a.replace('s.date', 'date')
-    prod_expr = ("if(coalesce(im.product,'')='', multiIf(s.item_code LIKE 'MOB%','MOBILE', s.item_code LIKE 'TV%','TV', "
-                 "s.item_code LIKE 'LAP%','LAPTOP', s.item_code LIKE 'AC%','AIR CONDITIONER', "
-                 "s.item_code LIKE 'WM%','WASHING MACHINES', s.item_code LIKE 'REF%','REFRIGERATORS',''), im.product)")
-    qty = "if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))"
+    prod_expr = MERCH_CAT_EXPR
+    qty = POS_UNITS_EXPR
     rev = "toFloat64(s.sold_price) * toInt64(s.qty)"
     extra = ""
-    st_filter = f" AND upper(coalesce(bm.branch_name, s.branch)) LIKE '%{store_type}%'" if store_type else ""
+    st_filter = f" AND upper({BRANCH_NAME_EXPR}) LIKE '%{store_type}%'" if store_type else ""
     extra += st_filter
     if branch_code:
         extra += f" AND s.branch = '{branch_code}'"
@@ -1016,10 +1068,8 @@ def answer_with_nlp(question):
         excluded_c = ("'SCHEME','AC OUTDOOR','D SPARE','SPARE','GDP-SPARE','FIXED ASSETS','DEMO','DEMO ACCESSORIES',"
                       "'STATIONERY ITEMS','GIFT ITEMS','OFFER KIT','FOC','SERVICE','SERVICE CHARGES','OSG WARRANTY',"
                       "'CARE PLUS','LG AMC','GDOT CARE','TOTAL SECURITY','MOBILE ANTIVIRUS','CEGI','SMART CHOICE'")
-        prod_expr_c = ("if(coalesce(im.product,'')='', multiIf(s.item_code LIKE 'MOB%','MOBILE', s.item_code LIKE 'TV%','TV', "
-                       "s.item_code LIKE 'LAP%','LAPTOP', s.item_code LIKE 'AC%','AIR CONDITIONER', "
-                       "s.item_code LIKE 'WM%','WASHING MACHINES', s.item_code LIKE 'REF%','REFRIGERATORS',''), im.product)")
-        qty_c = "if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))"
+        prod_expr_c = MERCH_CAT_EXPR
+        qty_c = POS_UNITS_EXPR
         rev_c = "toFloat64(s.sold_price) * toInt64(s.qty)"
         extra = ""
         group_expr, group_title = prod_expr_c, "Product Category"
@@ -1171,13 +1221,11 @@ def answer_with_nlp(question):
         excluded = ("'SCHEME','AC OUTDOOR','D SPARE','SPARE','GDP-SPARE','FIXED ASSETS','DEMO','DEMO ACCESSORIES',"
                     "'STATIONERY ITEMS','GIFT ITEMS','OFFER KIT','FOC','SERVICE','SERVICE CHARGES','OSG WARRANTY',"
                     "'CARE PLUS','LG AMC','GDOT CARE','TOTAL SECURITY','MOBILE ANTIVIRUS','CEGI','SMART CHOICE'")
-        prod_expr = ("if(coalesce(im.product,'')='', multiIf(s.item_code LIKE 'MOB%','MOBILE', s.item_code LIKE 'TV%','TV', "
-                     "s.item_code LIKE 'LAP%','LAPTOP', s.item_code LIKE 'AC%','AIR CONDITIONER', "
-                     "s.item_code LIKE 'WM%','WASHING MACHINES', s.item_code LIKE 'REF%','REFRIGERATORS',''), im.product)")
-        net_units = "sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty)))"
-        branch_cond = f"AND s.branch = '{target_branch_code}'" if target_branch_code else ""
-        scope = target_branch_name if target_branch_code else "all stores"
-        base_where = (f"WHERE {date_filter} AND s.branch NOT IN ('SMC', '3GH') {branch_cond} "
+        prod_expr = MERCH_CAT_EXPR
+        net_units = f"sum({POS_UNITS_EXPR})"
+        branch_cond = f"AND s.branch = '{target_branch_code}'" if target_branch_code else f"AND {RETAIL_STORE_FILTER_SQL}"
+        scope = target_branch_name if target_branch_code else "all retail stores"
+        base_where = (f"WHERE {date_filter} {branch_cond} "
                       f"AND s.item_code NOT LIKE 'SRV%' AND {prod_expr} != '' AND {prod_expr} NOT IN ({excluded})")
         if by_revenue:
             order = "revenue ASC, units ASC" if is_least else "revenue DESC, units DESC"
@@ -1189,6 +1237,7 @@ def answer_with_nlp(question):
                    {net_units} AS units,
                    round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) AS revenue
             FROM azure_sales_report s
+            LEFT JOIN branch_master bm ON bm.code = s.branch
             LEFT JOIN item_master im ON im.item_code = s.item_code
             {base_where}
             GROUP BY product
@@ -1205,7 +1254,7 @@ def answer_with_nlp(question):
             alt_sql = f"""
                 SELECT {prod_expr} AS product, {net_units} AS units,
                        round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) AS revenue
-                FROM azure_sales_report s LEFT JOIN item_master im ON im.item_code = s.item_code
+                FROM azure_sales_report s LEFT JOIN branch_master bm ON bm.code = s.branch LEFT JOIN item_master im ON im.item_code = s.item_code
                 {base_where}
                 GROUP BY product {having}
                 ORDER BY {'units' if by_revenue else 'revenue'} {'ASC' if is_least else 'DESC'} LIMIT 1
@@ -1224,7 +1273,7 @@ def answer_with_nlp(question):
             m_sql = f"""
                 SELECT coalesce(im.item_name, s.item_code) AS model, {net_units} AS units,
                        round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) AS revenue
-                FROM azure_sales_report s LEFT JOIN item_master im ON im.item_code = s.item_code
+                FROM azure_sales_report s LEFT JOIN branch_master bm ON bm.code = s.branch LEFT JOIN item_master im ON im.item_code = s.item_code
                 {base_where} AND {prod_expr} = '{top_prod_sql}'
                 GROUP BY model HAVING units > 0
                 ORDER BY {'revenue' if by_revenue else 'units'} {'ASC' if is_least else 'DESC'} LIMIT 3
@@ -1275,25 +1324,25 @@ def answer_with_nlp(question):
             item_cond = f"upper(im.item_name) LIKE '%{item_term}%' AND coalesce(im.product, '') NOT IN ('OSG WARRANTY', 'FIXED ASSETS', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
         else:
             if product == 'TV':
-                item_cond = "(upper(im.product) = 'TV' OR im.item_category = 'Tv 18 %' OR s.item_code LIKE 'TV%') AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')"
+                item_cond = f"(({PROD_EXPR}) = 'TV' OR im.item_category = 'Tv 18 %') AND coalesce(im.product, '') != 'SCHEME'"
             elif product == 'MOBILE':
-                item_cond = "(upper(im.product) = 'MOBILE' OR (s.item_code LIKE 'MOB%' AND coalesce(im.product, '') != 'MOBILE ANTIVIRUS')) AND coalesce(im.product, '') NOT IN ('SCHEME', 'MOBILE ANTIVIRUS', 'DEMO', 'DEMO ACCESSORIES')"
+                item_cond = f"({PROD_EXPR}) = 'MOBILE' AND coalesce(im.product, '') NOT IN ('SCHEME', 'MOBILE ANTIVIRUS')"
             elif product == 'LAPTOP':
-                item_cond = "(upper(im.product) = 'LAPTOP' OR s.item_code LIKE 'LAP%') AND coalesce(im.product, '') NOT IN ('SCHEME', 'LAPTOP BAG', 'DEMO', 'DEMO ACCESSORIES')"
+                item_cond = f"({PROD_EXPR}) = 'LAPTOP' AND coalesce(im.product, '') NOT IN ('SCHEME', 'LAPTOP BAG')"
             elif product == 'AIR CONDITIONER':
-                item_cond = "(upper(im.product) = 'AIR CONDITIONER' OR (s.item_code LIKE 'AC%' AND coalesce(im.product, '') = '')) AND coalesce(im.product, '') NOT IN ('AC OUTDOOR', 'SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+                item_cond = f"(({PROD_EXPR}) = 'AIR CONDITIONER' OR {IS_AC_OUTDOOR_EXPR}) AND coalesce(im.product, '') != 'SCHEME'"
             elif product == 'REFRIGERATORS':
-                item_cond = "(upper(im.product) IN ('REFRIGERATORS', 'FREEZER') OR s.item_code LIKE 'REF%') AND coalesce(im.product, '') NOT IN ('SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+                item_cond = f"({PROD_EXPR}) IN ('REFRIGERATORS', 'FREEZER') AND coalesce(im.product, '') != 'SCHEME'"
             elif product == 'WASHING MACHINES':
-                item_cond = "(upper(im.product) = 'WASHING MACHINES' OR s.item_code LIKE 'WSM%' OR s.item_code LIKE 'WM%') AND coalesce(im.product, '') NOT IN ('SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+                item_cond = f"({PROD_EXPR}) = 'WASHING MACHINES' AND coalesce(im.product, '') != 'SCHEME'"
             elif product == 'TABLET':
-                item_cond = "(upper(im.product) = 'TABLET' OR s.item_code LIKE 'TAB%') AND coalesce(im.product, '') NOT IN ('SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+                item_cond = f"({PROD_EXPR}) = 'TABLET' AND coalesce(im.product, '') != 'SCHEME'"
             elif product == 'SMART WATCH':
-                item_cond = "upper(im.product) = 'SMART WATCH' AND coalesce(im.product, '') NOT IN ('SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+                item_cond = "upper(im.product) = 'SMART WATCH' AND coalesce(im.product, '') != 'SCHEME'"
             elif product == 'EAR WEARABLES':
-                item_cond = "upper(im.product) = 'EAR WEARABLES' AND coalesce(im.product, '') NOT IN ('SCHEME', 'DEMO', 'DEMO ACCESSORIES')"
+                item_cond = "upper(im.product) = 'EAR WEARABLES' AND coalesce(im.product, '') != 'SCHEME'"
             else:
-                item_cond = f"upper(im.product) = '{product}' AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')"
+                item_cond = f"upper({PROD_EXPR}) = '{product}' AND coalesce(im.product, '') != 'SCHEME'"
 
         if brand:
             item_cond += f" AND upper(im.brand) = '{brand}'"
@@ -1302,18 +1351,22 @@ def answer_with_nlp(question):
             display_title = display_name
 
         if target_branch_code:
-            item_cond += f" AND s.branch = '{target_branch_code}'"
+            branch_scope_sql = f"s.branch = '{target_branch_code}'"
             display_title = f"{display_title} at {target_branch_name}"
+        else:
+            branch_scope_sql = RETAIL_STORE_FILTER_SQL
 
         sql = f"""
-            SELECT sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
-                   sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
-                   count(DISTINCT if(s.sold_price > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices,
+            SELECT round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue,
+                   sum({POS_UNITS_EXPR}) as units,
+                   count(DISTINCT if(toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices,
                    count(DISTINCT s.branch) as branches
             FROM azure_sales_report s
+            LEFT JOIN branch_master bm ON bm.code = s.branch
             LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE {date_filter}
-              AND s.branch NOT IN ('SMC', '3GH')
+              AND {branch_scope_sql}
+              AND coalesce(im.item_group, '') != 'SCHEME'
               AND {item_cond}
         """
         rows = run_sql(sql)
@@ -1325,14 +1378,16 @@ def answer_with_nlp(question):
         # Check if user requested a comparison with previous year
         if is_compare and prev_date_filter:
             prev_sql = f"""
-                SELECT sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
-                       sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
-                       count(DISTINCT if(s.sold_price > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices,
+                SELECT round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue,
+                       sum({POS_UNITS_EXPR}) as units,
+                       count(DISTINCT if(toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices,
                        count(DISTINCT s.branch) as branches
                 FROM azure_sales_report s
+                LEFT JOIN branch_master bm ON bm.code = s.branch
                 LEFT JOIN item_master im ON im.item_code = s.item_code
                 WHERE {prev_date_filter}
-                  AND s.branch NOT IN ('SMC', '3GH')
+                  AND {branch_scope_sql}
+                  AND coalesce(im.item_group, '') != 'SCHEME'
                   AND {item_cond}
             """
             prev_rows = run_sql(prev_sql)
@@ -1390,12 +1445,14 @@ def answer_with_nlp(question):
         if not brand:
             b_sql = f"""
                 SELECT coalesce(nullIf(trim(im.brand), ''), 'Unmapped POS SKU') as brand,
-                       sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
-                       sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue
+                       sum({POS_UNITS_EXPR}) as units,
+                       round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue
                 FROM azure_sales_report s
+                LEFT JOIN branch_master bm ON bm.code = s.branch
                 LEFT JOIN item_master im ON im.item_code = s.item_code
                 WHERE {date_filter}
-                  AND s.branch NOT IN ('SMC', '3GH')
+                  AND {branch_scope_sql}
+                  AND coalesce(im.item_group, '') != 'SCHEME'
                   AND {item_cond}
                 GROUP BY brand
                 ORDER BY {'units' if is_qty_query else 'revenue'} DESC
@@ -1408,8 +1465,10 @@ def answer_with_nlp(question):
                 else:
                     top_brand_txt = f" Top brand was **{b_rows[0]['brand']}** with **{format_inr(b_rows[0]['revenue'])}** ({format_units(b_rows[0]['units'])} units)."
 
+        _wp = f"In **{date_label}**" if is_month else (f"From **{date_label}**" if start_date != end_date else f"On **{date_label}**")
+        _bw = "branch" if branches == 1 else "branches"
         if is_qty_query:
-            ans = f"On **{date_label}**, a total of **{format_units(units)} units** of **{display_title}** were sold across **{branches} branches** (generating **{format_inr(rev)}** in revenue across {format_units(invoices)} customer invoices).{top_brand_txt}"
+            ans = f"{_wp}, a total of **{format_units(units)} units** of **{display_title}** were sold across **{branches} {_bw}** (generating **{format_inr(rev)}** — {format_inr_exact(rev)} in revenue across {format_units(invoices)} customer invoices).{top_brand_txt}"
             cards = [
                 {"label": f"{display_title} Units Sold", "value": format_units(units), "color": "#059669"},
                 {"label": "Total Revenue", "value": format_inr(rev), "color": "#2563eb"},
@@ -1423,7 +1482,7 @@ def answer_with_nlp(question):
                     "rows": [[r['brand'], format_units(r['units']), format_inr_exact(r['revenue'])] for r in b_rows]
                 }
         else:
-            ans = f"On **{date_label}**, total **{display_title}** sales were **{format_inr(rev)}** ({format_inr_exact(rev)}) with **{format_units(units)} units** sold across **{branches} branches**.{top_brand_txt}"
+            ans = f"{_wp}, total **{display_title}** sales were **{format_inr(rev)}** ({format_inr_exact(rev)}) with **{format_units(units)} units** sold across **{branches} {_bw}**.{top_brand_txt}"
             cards = [
                 {"label": f"Total {display_title} Revenue", "value": format_inr(rev), "color": "#059669"},
                 {"label": "Units Sold", "value": format_units(units), "color": "#2563eb"},
@@ -1445,14 +1504,15 @@ def answer_with_nlp(question):
     # 3. SINGLE BRANCH / STORE SALES (e.g. "what is total revenue on 01-06-2026 by balussery future")
     if target_branch_code:
         sql = f"""
-            SELECT sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
-                   sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
-                   count(DISTINCT if(s.sold_price > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices
+            SELECT round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue,
+                   sum({POS_UNITS_EXPR}) as units,
+                   count(DISTINCT if(toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices
             FROM azure_sales_report s
             LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE {date_filter}
               AND s.branch = '{target_branch_code}'
-              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')
+              AND coalesce(im.product, '') != 'SCHEME'
+              AND coalesce(im.item_group, '') != 'SCHEME'
         """
         rows = run_sql(sql)
         rev = float(rows[0]['revenue']) if rows and rows[0].get('revenue') is not None else 0
@@ -1462,14 +1522,15 @@ def answer_with_nlp(question):
         # Check if user requested a comparison with previous year
         if is_compare and prev_date_filter:
             prev_sql = f"""
-                SELECT sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
-                       sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
-                       count(DISTINCT if(s.sold_price > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices
+                SELECT round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue,
+                       sum({POS_UNITS_EXPR}) as units,
+                       count(DISTINCT if(toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as invoices
                 FROM azure_sales_report s
                 LEFT JOIN item_master im ON im.item_code = s.item_code
                 WHERE {prev_date_filter}
                   AND s.branch = '{target_branch_code}'
-                  AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')
+                  AND coalesce(im.product, '') != 'SCHEME'
+                  AND coalesce(im.item_group, '') != 'SCHEME'
             """
             prev_rows = run_sql(prev_sql)
             rev_prev = float(prev_rows[0]['revenue']) if prev_rows and prev_rows[0].get('revenue') is not None else 0
@@ -1518,14 +1579,15 @@ def answer_with_nlp(question):
 
         # Query top product categories for this store on this date
         p_sql = f"""
-            SELECT if({PROD_EXPR} = '', 'Other', {PROD_EXPR}) as product,
-                   sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units,
+            SELECT if({MERCH_CAT_EXPR} = '', 'Other', {MERCH_CAT_EXPR}) as product,
+                   sum({POS_UNITS_EXPR}) as units,
                    round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue
             FROM azure_sales_report s
             LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE {date_filter}
               AND s.branch = '{target_branch_code}'
-              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')
+              AND coalesce(im.product, '') NOT IN ('SCHEME', 'SMART CHOICE')
+              AND coalesce(im.item_group, '') != 'SCHEME'
             GROUP BY product
             ORDER BY revenue DESC
             LIMIT 5
@@ -1535,7 +1597,8 @@ def answer_with_nlp(question):
         if p_rows:
             top_prod_txt = f" Leading category was **{p_rows[0]['product']}** with **{format_inr(p_rows[0]['revenue'])}** ({format_units(p_rows[0]['units'])} units)."
 
-        ans = f"On **{date_label}**, **{target_branch_name}** generated **{format_inr(rev)}** ({format_inr_exact(rev)}) in net sales with **{format_units(units)} units** sold across **{format_units(invoices)} customer invoices**.{top_prod_txt}"
+        _wp3 = f"In **{date_label}**" if is_month else (f"From **{date_label}**" if start_date != end_date else f"On **{date_label}**")
+        ans = f"{_wp3}, **{target_branch_name}** generated **{format_inr(rev)}** ({format_inr_exact(rev)}) in net sales with **{format_units(units)} units** sold across **{format_units(invoices)} customer invoices**.{top_prod_txt}"
         cards = [
             {"label": "Store Net Sales", "value": format_inr(rev), "color": "#059669"},
             {"label": "Units Sold", "value": format_units(units), "color": "#2563eb"},
@@ -1567,14 +1630,16 @@ def answer_with_nlp(question):
         card_color = "#ef4444" if is_least else "#4f46e5"
 
         sql = f"""
-            SELECT if({PROD_EXPR} = '', 'Other', {PROD_EXPR}) as product,
-                   sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
-                   sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units
+            SELECT if({MERCH_CAT_EXPR} = '', 'Other', {MERCH_CAT_EXPR}) as product,
+                   round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue,
+                   sum({POS_UNITS_EXPR}) as units
             FROM azure_sales_report s
+            LEFT JOIN branch_master bm ON bm.code = s.branch
             LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE {date_filter}
-              AND s.branch NOT IN ('SMC', '3GH')
-              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'D SPARE', 'SPARE', 'FIXED ASSETS', 'DEMO', 'DEMO ACCESSORIES')
+              AND {RETAIL_STORE_FILTER_SQL}
+              AND coalesce(im.product, '') NOT IN ('SCHEME', 'SMART CHOICE', 'D SPARE', 'SPARE', 'FIXED ASSETS')
+              AND coalesce(im.item_group, '') != 'SCHEME'
             GROUP BY product
             {having_clause}
             {order_clause}
@@ -1641,7 +1706,7 @@ def answer_with_nlp(question):
             SELECT s.branch AS branch_code,
                    {branch_name_expr} AS branch_name,
                    round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) AS revenue,
-                   sum(if(toFloat64(s.sold_price) < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) AS units,
+                   sum({POS_UNITS_EXPR}) AS units,
                    uniqExact(toDate(s.date)) AS active_days
             FROM azure_sales_report s
             LEFT JOIN branch_master bm ON bm.code = s.branch
@@ -1650,10 +1715,8 @@ def answer_with_nlp(question):
               AND s.branch NOT IN ('SMC','3GH','CSB','TMC','RDS','MCL3','HAC','ECO','KSO','MRK','VSP')
               AND positionCaseInsensitive({branch_name_expr}, 'GODOWN') = 0
               AND positionCaseInsensitive({branch_name_expr}, 'WAREHOUSE') = 0
-              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR')
+              AND coalesce(im.product, '') != 'SCHEME'
               AND coalesce(im.item_group, '') != 'SCHEME'
-              AND lower(coalesce(im.item_category, '')) != 'ac outdoor'
-              AND lower(coalesce(im.item_name, '')) NOT LIKE 'o/d%'
               {store_type_filter}
             GROUP BY branch_code, branch_name
             {having_clause}
@@ -1691,7 +1754,7 @@ def answer_with_nlp(question):
             top1 = rows[0]
             when_prefix = f"In **{date_label}**" if is_month else (f"From **{date_label}**" if start_date != end_date else f"On **{date_label}**")
             if len(rows) > 1:
-                others_summary = ", ".join(f"**{r['branch_name']}** ({format_inr(r['revenue'])})" for r in rows[1:min(5, len(rows))])
+                others_summary = ", ".join(f"**{r['branch_name']}** ({format_inr(r['revenue'])} — {format_inr_exact(r['revenue'])})" for r in rows[1:min(5, len(rows))])
                 ans = (
                     f"{when_prefix}, the {len(rows)} {'least' if is_least else 'top'} performing {store_type_desc} by {metric_desc} "
                     f"were led {'at the bottom ' if is_least else ''}by **{top1['branch_name']}** with **{format_inr(top1['revenue'])}** "
@@ -1737,17 +1800,19 @@ def answer_with_nlp(question):
             }
 
     # 6. TOTAL SALE ON A SPECIFIC DATE OR MONTH (e.g. "what was the sale on a specific date")
+    retail_cond = f"({RETAIL_STORE_FILTER_SQL}) AND coalesce(im.product, '') != 'SCHEME' AND coalesce(im.item_group, '') != 'SCHEME'"
     sql = f"""
         SELECT 
-            sumIf(toFloat64(s.sold_price) * toInt64(s.qty), s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME') as retail_sales,
-            sumIf(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty)), s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME') as retail_units,
-            count(DISTINCT if(s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME' AND s.sold_price > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as retail_invoices,
-            count(DISTINCT if(s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME', s.branch, null)) as retail_branches,
-            sumIf(toFloat64(s.sold_price) * toInt64(s.qty), s.branch IN ('SMC', '3GH') OR coalesce(im.product, '') = 'SCHEME') as internal_schemes_demo,
-            sum(toFloat64(s.sold_price) * toInt64(s.qty)) as total_sales,
-            sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as total_units,
-            count(DISTINCT if(s.sold_price > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as total_invoices
+            round(sumIf(toFloat64(s.sold_price) * toInt64(s.qty), {retail_cond}), 2) as retail_sales,
+            sumIf({POS_UNITS_EXPR}, {retail_cond}) as retail_units,
+            count(DISTINCT if({retail_cond} AND toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as retail_invoices,
+            count(DISTINCT if({retail_cond}, s.branch, null)) as retail_branches,
+            round(sumIf(toFloat64(s.sold_price) * toInt64(s.qty), NOT ({retail_cond})), 2) as internal_schemes_demo,
+            round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as total_sales,
+            sum({POS_UNITS_EXPR}) as total_units,
+            count(DISTINCT if(toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as total_invoices
         FROM azure_sales_report s
+        LEFT JOIN branch_master bm ON bm.code = s.branch
         LEFT JOIN item_master im ON im.item_code = s.item_code
         WHERE {date_filter}
     """
@@ -1770,11 +1835,12 @@ def answer_with_nlp(question):
         if is_compare and prev_date_filter:
             prev_sql = f"""
                 SELECT 
-                    sumIf(toFloat64(s.sold_price) * toInt64(s.qty), s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME') as retail_sales,
-                    sumIf(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty)), s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME') as retail_units,
-                    count(DISTINCT if(s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME' AND s.sold_price > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as retail_invoices,
-                    count(DISTINCT if(s.branch NOT IN ('SMC', '3GH') AND coalesce(im.product, '') != 'SCHEME', s.branch, null)) as retail_branches
+                    round(sumIf(toFloat64(s.sold_price) * toInt64(s.qty), {retail_cond}), 2) as retail_sales,
+                    sumIf({POS_UNITS_EXPR}, {retail_cond}) as retail_units,
+                    count(DISTINCT if({retail_cond} AND toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as retail_invoices,
+                    count(DISTINCT if({retail_cond}, s.branch, null)) as retail_branches
                 FROM azure_sales_report s
+                LEFT JOIN branch_master bm ON bm.code = s.branch
                 LEFT JOIN item_master im ON im.item_code = s.item_code
                 WHERE {prev_date_filter}
             """
@@ -1827,13 +1893,14 @@ def answer_with_nlp(question):
 
         # Get top product on this date for added insight
         p_sql = f"""
-            SELECT if({PROD_EXPR} = '', 'Other', {PROD_EXPR}) as product,
-                   sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue
+            SELECT if({MERCH_CAT_EXPR} = '', 'Other', {MERCH_CAT_EXPR}) as product,
+                   round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as revenue
             FROM azure_sales_report s
+            LEFT JOIN branch_master bm ON bm.code = s.branch
             LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE {date_filter}
-              AND s.branch NOT IN ('SMC', '3GH')
-              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'D SPARE', 'SPARE', 'DEMO', 'DEMO ACCESSORIES')
+              AND {retail_cond}
+              AND coalesce(im.product, '') NOT IN ('SMART CHOICE', 'D SPARE', 'SPARE', 'FIXED ASSETS')
             GROUP BY product
             ORDER BY revenue DESC
             LIMIT 1
@@ -1847,7 +1914,8 @@ def answer_with_nlp(question):
         if internal_amt > 0:
             reconcile_note = f" *(Corporate Gross Billed including HQ demo allocations & scheme vouchers: {format_inr(gross_sales)})*"
 
-        ans = f"On **{date_label}**, **Retail Store Net Sales** were **{format_inr(main_sales)}** ({format_inr_exact(main_sales)}) across **{retail_branches} branches** with **{format_units(main_units)} units** sold across **{format_units(main_inv)} customer invoices**.{p_extra}{reconcile_note}"
+        _wp6 = f"In **{date_label}**" if is_month else (f"From **{date_label}**" if start_date != end_date else f"On **{date_label}**")
+        ans = f"{_wp6}, **Retail Store Net Sales** were **{format_inr(main_sales)}** ({format_inr_exact(main_sales)}) across **{retail_branches} branches** with **{format_units(main_units)} units** sold across **{format_units(main_inv)} customer invoices**.{p_extra}{reconcile_note}"
         cards = [
             {"label": "Retail Store Sales", "value": format_inr(main_sales), "color": "#059669"},
             {"label": "Units Sold", "value": format_units(main_units), "color": "#2563eb"},
@@ -1922,8 +1990,10 @@ def ask_gemini(question, api_key, history=None):
     Rules:
     - Return ONLY a JSON object: {"sql": "SELECT ..."}
     - Always use toDate(s.date) or toDate(date) for date comparisons
-    - Never count 'AC OUTDOOR' or 'SCHEME' in products
-    - For revenue use: sum(toFloat64(s.sold_price) * toInt64(s.qty))
+    - Never include 'SCHEME' items or non-retail branches ('SMC','3GH','CSB','TMC','RDS','MCL3','HAC','ECO','KSO','MRK','VSP')
+    - Keep 'AC OUTDOOR' in store/AC revenue (do NOT filter out AC OUTDOOR in WHERE), but exclude AC OUTDOOR from unit counts
+    - For store/category revenue use: round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2)
+    - For net physical units use: sum(if(coalesce(im.product,'')='AC OUTDOOR' OR lower(coalesce(im.item_name,'')) LIKE 'o/d%', 0, if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), if(toFloat64(s.sold_price) < 0, 0, toInt64(s.qty)))))
     - Limit results to at most 10 rows
     """ + (
         f"\n    Context: Today (IST) is {(datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%Y-%m-%d')} "

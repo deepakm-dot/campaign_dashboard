@@ -29,10 +29,22 @@ MARKET_NOTES = [
     "Festival calendar shifts: Thiruvonam was 5-Sep-2025 and 26-Aug-2026 (both inside Jul-Sep); Diwali was 20-Oct-2025 and falls on 8-Nov-2026, so Oct-Dec comparisons will be split differently between October and November.",
 ]
 
-PROD = ("if(coalesce(im.product,'')='', multiIf(s.item_code LIKE 'MOB%','MOBILE', s.item_code LIKE 'TV%','TV', "
-        "s.item_code LIKE 'LAP%','LAPTOP', s.item_code LIKE 'AC%','AIR CONDITIONER', "
-        "s.item_code LIKE 'WM%','WASHING MACHINES', s.item_code LIKE 'REF%','REFRIGERATORS',''), im.product)")
-QTY = "if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))"
+_RAW_PROD = (
+    "if(coalesce(im.product, '') != '', im.product, "
+    "multiIf("
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'MOB', 'MOBILE', "
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'TV', 'TV', "
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'LAP', 'LAPTOP', "
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) IN ('WSM', 'WM'), 'WASHING MACHINES', "
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'REF', 'REFRIGERATORS', "
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'TAB', 'TABLET', "
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'AC' AND abs(toFloat64(s.sold_price)) >= 1000, 'AIR CONDITIONER', "
+    "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'AC' AND abs(toFloat64(s.sold_price)) < 100, 'AC OUTDOOR', "
+    "''))"
+)
+_IS_OD = f"(({_RAW_PROD}) = 'AC OUTDOOR' OR lower(coalesce(im.item_category, '')) = 'ac outdoor' OR lower(coalesce(im.item_name, '')) LIKE 'o/d%')"
+PROD = f"if({_IS_OD}, 'AIR CONDITIONER', {_RAW_PROD})"
+QTY = f"if({_IS_OD}, 0, if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), if(toFloat64(s.sold_price) < 0, 0, toInt64(s.qty))))"
 REV = "toFloat64(s.sold_price) * toInt64(s.qty)"
 
 
@@ -101,7 +113,7 @@ def store_review(code, name, latest_date_str):
     base_ok = first <= bq_end  # store traded in base quarter
 
     # ---- Q1 store monthly x category ----
-    base_filter = "coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR', 'DEMO', 'DEMO ACCESSORIES')"
+    base_filter = "coalesce(im.product, '') != 'SCHEME' AND coalesce(im.item_group, '') != 'SCHEME'"
     rows1 = q(f"""SELECT toString(toStartOfMonth(toDate(s.date))) AS m, {PROD} AS grp, sum({QTY}) AS u, sum({REV}) AS r
                   FROM azure_sales_report s LEFT JOIN item_master im ON im.item_code = s.item_code
                   WHERE s.branch = '{code}' AND toDate(s.date) >= '{first}' AND {base_filter} GROUP BY m, grp""")

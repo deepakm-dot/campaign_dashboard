@@ -1011,6 +1011,8 @@ def get_campaign_store_sales(campaign_id):
                 ''
             )
         )"""
+        is_od_expr = f"(({eff_prod}) = 'AC OUTDOOR' OR lower(coalesce(im.item_category, '')) = 'ac outdoor' OR lower(coalesce(im.item_name, '')) LIKE 'o/d%')"
+        pos_units_expr = f"if({is_od_expr}, 0, if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), if(toFloat64(s.sold_price) < 0, 0, toInt64(s.qty))))"
         sql = f"""
             SELECT
                 multiIf(
@@ -1019,23 +1021,20 @@ def get_campaign_store_sales(campaign_id):
                     ({eff_prod}) = 'REFRIGERATORS', 'Referigerator',
                     ({eff_prod}) = 'MOBILE', 'Mobile',
                     ({eff_prod}) = 'LAPTOP', 'Laptop',
-                    ({eff_prod}) = 'AIR CONDITIONER', 'AC',
+                    ({eff_prod}) = 'AIR CONDITIONER' OR {is_od_expr}, 'AC',
                     'Other'
                 ) AS product_type,
-                SUM(if(toFloat64(s.sold_price) > 0, toInt64(s.qty), 0)) AS paid_qty,
-                SUM(if(toFloat64(s.sold_price) < 0, -toInt64(s.qty), toInt64(s.qty)))  AS net_qty,
+                SUM(if(NOT {is_od_expr} AND toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', toInt64(s.qty), 0)) AS paid_qty,
+                SUM({pos_units_expr})                                  AS net_qty,
                 SUM(toFloat64(s.sold_price) * toInt64(s.qty))          AS revenue,
-                SUM(if(toFloat64(s.sold_price) > 0, toFloat64(s.sold_price) * toInt64(s.qty), 0)) AS gross_rev,
-                SUM(if(toFloat64(s.sold_price) < 0, toFloat64(s.sold_price) * toInt64(s.qty), 0)) AS deductions
+                SUM(if(toFloat64(s.sold_price) >= 0 AND s.invoice_no NOT LIKE '%-SR-%', toFloat64(s.sold_price) * toInt64(s.qty), 0)) AS gross_rev,
+                SUM(if(toFloat64(s.sold_price) < 0 OR s.invoice_no LIKE '%-SR-%', toFloat64(s.sold_price) * toInt64(s.qty), 0)) AS deductions
             FROM azure_sales_report s
             LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE toDate(s.date) >= '{start_date}'
               AND toDate(s.date) <= '{end_date}'
               AND {branch_cond_s}
-              -- CRITICAL RULE: NEVER count 'ac outdoor' or 'SCHEME' (internal vouchers)
-              AND ({eff_prod}) != 'AC OUTDOOR'
-              AND lower(coalesce(im.item_category, '')) != 'ac outdoor'
-              AND lower(coalesce(im.item_name, '')) NOT LIKE 'o/d%'
+              -- Keep AC OUTDOOR revenue in AC while counting 0 extra units; exclude internal SCHEME vouchers
               AND ({eff_prod}) != 'SCHEME'
               AND coalesce(im.item_group, '') != 'SCHEME'
             GROUP BY product_type
@@ -1241,27 +1240,27 @@ def get_brand_breakdown(campaign_id):
         'MOBILES': f"({eff_prod}) = 'MOBILE'",
         'LAPTOP': f"({eff_prod}) = 'LAPTOP'",
         'LAPTOPS': f"({eff_prod}) = 'LAPTOP'",
-        'AC': f"({eff_prod}) = 'AIR CONDITIONER'",
-        'AIR CONDITIONER': f"({eff_prod}) = 'AIR CONDITIONER'",
+        'AC': f"(({eff_prod}) = 'AIR CONDITIONER' OR (({eff_prod}) = 'AC OUTDOOR' OR lower(coalesce(im.item_category, '')) = 'ac outdoor' OR lower(coalesce(im.item_name, '')) LIKE 'o/d%'))",
+        'AIR CONDITIONER': f"(({eff_prod}) = 'AIR CONDITIONER' OR (({eff_prod}) = 'AC OUTDOOR' OR lower(coalesce(im.item_category, '')) = 'ac outdoor' OR lower(coalesce(im.item_name, '')) LIKE 'o/d%'))",
     }
+
+    is_od_cb = f"(({eff_prod}) = 'AC OUTDOOR' OR lower(coalesce(im.item_category, '')) = 'ac outdoor' OR lower(coalesce(im.item_name, '')) LIKE 'o/d%')"
+    pos_units_cb = f"if({is_od_cb}, 0, if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), if(toFloat64(s.sold_price) < 0, 0, toInt64(s.qty))))"
 
     product_filter = PRODUCT_FILTERS.get(norm_product)
     if not product_filter:
-        product_filter = f"({eff_prod}) NOT IN ('TV','WASHING MACHINES','REFRIGERATORS','MOBILE','LAPTOP','AIR CONDITIONER','AC OUTDOOR','SCHEME')" 
+        product_filter = f"({eff_prod}) NOT IN ('TV','WASHING MACHINES','REFRIGERATORS','MOBILE','LAPTOP','AIR CONDITIONER','AC OUTDOOR','SCHEME') AND NOT {is_od_cb}" 
 
     sql = f"""
         SELECT
             coalesce(nullIf(trim(im.brand), ''), 'Unknown') AS brand,
-            SUM(if(toFloat64(s.sold_price) < 0, -toInt64(s.qty), toInt64(s.qty))) AS total_qty,
+            SUM({pos_units_cb}) AS total_qty,
             SUM(toFloat64(s.sold_price) * toInt64(s.qty))    AS total_revenue
         FROM azure_sales_report s
         LEFT JOIN item_master im ON im.item_code = s.item_code
         WHERE toDate(s.date) >= '{start_date}'
           AND toDate(s.date) <= '{end_date}'
           AND {branch_cond_s}
-          AND ({eff_prod}) != 'AC OUTDOOR'
-          AND lower(coalesce(im.item_category, '')) != 'ac outdoor'
-          AND lower(coalesce(im.item_name, '')) NOT LIKE 'o/d%'
           AND coalesce(im.product, '') != 'SCHEME'
           AND coalesce(im.item_group, '') != 'SCHEME'
           AND ({product_filter})
@@ -1360,17 +1359,17 @@ def get_campaign_incremental_lift(campaign_id):
         if "mavoor road" in (camp.get('campaign_name') or '').lower():
             branch_cond_s = "s.branch IN ('KIN', 'LAN', 'MAH', 'PCT', 'PUT', 'SBM', 'CAM')"
 
+    is_od_lift = "(coalesce(im.product, '') = 'AC OUTDOOR' OR lower(coalesce(im.item_category, '')) = 'ac outdoor' OR lower(coalesce(im.item_name, '')) LIKE 'o/d%')"
     sql = f"""
         SELECT
             toDate(s.date) AS day_date,
             toDayOfWeek(toDate(s.date)) AS dow,
             count(*) AS bills,
-            SUM(if(toFloat64(s.sold_price) < 0, -toInt64(s.qty), toInt64(s.qty))) AS units,
+            SUM(if({is_od_lift}, 0, if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), if(toFloat64(s.sold_price) < 0, 0, toInt64(s.qty))))) AS units,
             round(SUM(toFloat64(s.sold_price) * toInt64(s.qty)), 2) AS revenue
         FROM azure_sales_report s
         LEFT JOIN item_master im ON s.item_code = im.item_code
         WHERE {branch_cond_s}
-          AND (im.product != 'AC OUTDOOR' OR im.product IS NULL)
           AND coalesce(im.product, '') != 'SCHEME'
           AND coalesce(im.item_group, '') != 'SCHEME'
           AND (
