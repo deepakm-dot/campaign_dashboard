@@ -108,35 +108,141 @@ def extract_dates(text):
         d1 = f"{m_dmy[0][2]}-{m_dmy[0][1]}-{m_dmy[0][0]}"
         return d1, d1, d1, False
 
-    # 3. Check "14th August 2026" or "14 August 2026" or "August 14 2026"
-    m_word = re.search(r'\b(0?[1-9]|[12][0-9]|3[01])(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+(202[0-9]))?\b', t)
-    if m_word:
-        day = m_word.group(1).zfill(2)
-        month = MONTH_MAP.get(m_word.group(2)[:3], '08')
-        year = m_word.group(3) or '2026'
-        d = f"{year}-{month}-{day}"
-        return d, d, f"{day} {m_word.group(2).capitalize()} {year}", False
-
-    m_word2 = re.search(r'\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(0?[1-9]|[12][0-9]|3[01])(?:st|nd|rd|th)?(?:\s+(202[0-9]))?\b', t)
-    if m_word2:
-        month = MONTH_MAP.get(m_word2.group(1)[:3], '08')
-        day = m_word2.group(2).zfill(2)
-        year = m_word2.group(3) or '2026'
-        d = f"{year}-{month}-{day}"
-        return d, d, f"{day} {m_word2.group(1).capitalize()} {year}", False
+    # 3. Check word dates ("1 Oct 2026 to 30 Oct 2026", "14th August 2026", "October 24 2026", etc.)
+    mon_pat = r'(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)'
+    word_hits = []
+    for m_w in re.finditer(r'\b(0?[1-9]|[12][0-9]|3[01])(?:st|nd|rd|th)?\s+' + mon_pat + r'(?:,?\s+(202[0-9]))?\b', t):
+        day = m_w.group(1).zfill(2)
+        month = MONTH_MAP.get(m_w.group(2)[:3], '08')
+        year = m_w.group(3) or str((datetime.utcnow() + timedelta(hours=5, minutes=30)).year)
+        word_hits.append((m_w.start(), f"{year}-{month}-{day}", f"{day} {m_w.group(2)[:3].capitalize()} {year}"))
+    for m_w2 in re.finditer(r'\b' + mon_pat + r'\s+(0?[1-9]|[12][0-9]|3[01])(?:st|nd|rd|th)?(?:,?\s+(202[0-9]))?\b', t):
+        month = MONTH_MAP.get(m_w2.group(1)[:3], '08')
+        day = m_w2.group(2).zfill(2)
+        year = m_w2.group(3) or str((datetime.utcnow() + timedelta(hours=5, minutes=30)).year)
+        word_hits.append((m_w2.start(), f"{year}-{month}-{day}", f"{day} {m_w2.group(1)[:3].capitalize()} {year}"))
+    if word_hits:
+        word_hits.sort(key=lambda x: x[0])
+        dedup_hits = []
+        for pos, iso_d, lbl_d in word_hits:
+            if not dedup_hits or dedup_hits[-1][1] != iso_d:
+                dedup_hits.append((pos, iso_d, lbl_d))
+        if len(dedup_hits) >= 2:
+            d1, l1 = dedup_hits[0][1], dedup_hits[0][2]
+            d2, l2 = dedup_hits[1][1], dedup_hits[1][2]
+            if d1 > d2:
+                d1, d2, l1, l2 = d2, d1, l2, l1
+            return d1, d2, f"{l1} to {l2}", False
+        return dedup_hits[0][1], dedup_hits[0][1], dedup_hits[0][2], False
 
     # 4. Check Month Only (e.g., "August 2026", "in August", "in September")
-    m_month = re.search(r'\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+(202[0-9]))?\b', t)
+    m_month = re.search(r'\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+(202[0-9]))?\b', t)
     if m_month:
         month_name = m_month.group(1)
         month = MONTH_MAP.get(month_name[:3], '08')
-        year = m_month.group(2) or '2026'
+        year = m_month.group(2) or str((datetime.utcnow() + timedelta(hours=5, minutes=30)).year)
         # Days in month
         import calendar
         _, last_day = calendar.monthrange(int(year), int(month))
         d1 = f"{year}-{month}-01"
         d2 = f"{year}-{month}-{str(last_day).zfill(2)}"
-        return d1, d2, f"{month_name.capitalize()} {year}", True
+        return d1, d2, f"{calendar.month_name[int(month)]} {year}", True
+
+    return None, None, None, False
+
+
+def extract_relative_period(q_low, latest_date_str):
+    """
+    Resolves relative natural-language periods such as:
+    - 'this month' / 'current month' / 'mtd' / 'month to date' / 'starting date of this month to current date'
+    - 'last month' / 'previous month'
+    - 'this week' / 'current week' / 'wtd'
+    - 'last week' / 'previous week'
+    - 'last N days' / 'past N days'
+    - 'this quarter' / 'current quarter' / 'qtd'
+    - 'this year' / 'current year' / 'ytd'
+    - 'yesterday' / 'today'
+    Returns (start_date, end_date, date_label, matched_bool).
+    """
+    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    today_s = now_ist.strftime('%Y-%m-%d')
+    latest = latest_date_str or today_s
+    eff_end = min(today_s, latest)
+
+    def _fmt(iso_s):
+        return datetime.strptime(iso_s, '%Y-%m-%d').strftime('%d %b %Y')
+
+    # 1. Explicit "last N days" / "past N days"
+    m_ndays = re.search(r'\b(?:last|past)\s+(\d{1,3})\s+days?\b', q_low)
+    if m_ndays:
+        n_days = max(1, min(365, int(m_ndays.group(1))))
+        e_dt = datetime.strptime(eff_end, '%Y-%m-%d')
+        s_dt = e_dt - timedelta(days=n_days - 1)
+        s_iso = s_dt.strftime('%Y-%m-%d')
+        return s_iso, eff_end, f"{_fmt(s_iso)} to {_fmt(eff_end)} (Last {n_days} Days)", True
+
+    # 2. This Month / Month-to-Date / Start of This Month to Current Date
+    if re.search(
+        r'\b(this\s+month|current\s+month|present\s+month|mtd|month[\s-]+to[\s-]+date)\b'
+        r'|(?:start(?:ing)?|begin(?:ning)?|first|1st)\s+(?:date\s+|day\s+)?of\s+(?:this|current|the)\s+month',
+        q_low
+    ):
+        m_start = now_ist.strftime('%Y-%m-01')
+        if latest >= m_start:
+            s_iso = m_start
+            e_iso = eff_end
+            sync_note = '' if e_iso == today_s else f' — latest POS data through {_fmt(e_iso)}'
+            return s_iso, e_iso, f"{_fmt(s_iso)} to {_fmt(e_iso)} (This Month{sync_note})", True
+        else:
+            s_iso = latest[:7] + '-01'
+            e_iso = latest
+            return s_iso, e_iso, f"{_fmt(s_iso)} to {_fmt(e_iso)} (latest synced month)", True
+
+    # 3. Last Month / Previous Month
+    if re.search(r'\b(last\s+month|previous\s+month|prev\s+month|past\s+month)\b', q_low):
+        prev_end_dt = now_ist.replace(day=1) - timedelta(days=1)
+        s_iso = prev_end_dt.strftime('%Y-%m-01')
+        e_iso = prev_end_dt.strftime('%Y-%m-%d')
+        return s_iso, e_iso, f"{_fmt(s_iso)} to {_fmt(e_iso)} (Last Month)", True
+
+    # 4. This Week / Week-to-Date
+    if re.search(r'\b(this\s+week|current\s+week|wtd|week[\s-]+to[\s-]+date)\b', q_low):
+        w_start_dt = now_ist - timedelta(days=now_ist.weekday())
+        s_iso = w_start_dt.strftime('%Y-%m-%d')
+        e_iso = eff_end if eff_end >= s_iso else s_iso
+        return s_iso, e_iso, f"{_fmt(s_iso)} to {_fmt(e_iso)} (This Week)", True
+
+    # 5. Last Week / Previous Week
+    if re.search(r'\b(last\s+week|previous\s+week|prev\s+week)\b', q_low):
+        lw_end_dt = now_ist - timedelta(days=now_ist.weekday() + 1)
+        lw_start_dt = lw_end_dt - timedelta(days=6)
+        s_iso = lw_start_dt.strftime('%Y-%m-%d')
+        e_iso = lw_end_dt.strftime('%Y-%m-%d')
+        return s_iso, e_iso, f"{_fmt(s_iso)} to {_fmt(e_iso)} (Last Week)", True
+
+    # 6. This Quarter / Current Quarter
+    if re.search(r'\b(this\s+quarter|current\s+quarter|qtd|quarter[\s-]+to[\s-]+date)\b', q_low):
+        q_m = ((now_ist.month - 1) // 3) * 3 + 1
+        s_iso = f"{now_ist.year}-{q_m:02d}-01"
+        e_iso = eff_end if eff_end >= s_iso else latest
+        return s_iso, e_iso, f"{_fmt(s_iso)} to {_fmt(e_iso)} (This Quarter)", True
+
+    # 7. This Year / Current Year / YTD (only when not part of a YoY comparison keyword alone)
+    if re.search(r'\b(this\s+year|current\s+year|ytd|year[\s-]+to[\s-]+date)\b', q_low):
+        s_iso = f"{now_ist.year}-01-01"
+        e_iso = eff_end if eff_end >= s_iso else latest
+        return s_iso, e_iso, f"{_fmt(s_iso)} to {_fmt(e_iso)} (This Year)", True
+
+    # 8. Yesterday / Today
+    if re.search(r'\byesterday\b', q_low):
+        d = (now_ist - timedelta(days=1)).strftime('%Y-%m-%d')
+        d = min(d, latest)
+        return d, d, _fmt(d), True
+
+    if re.search(r'\b(today|current\s+date|till\s+date|to\s+date)\b', q_low):
+        d = eff_end
+        lbl = _fmt(d) + ('' if d == today_s else ' (latest available; no sales synced for today yet)')
+        return d, d, lbl, True
 
     return None, None, None, False
 
@@ -726,23 +832,17 @@ def answer_with_nlp(question):
         'same day last year', 'same period last year', 'compared with', 'compared to'
     ])
 
-    # Default date if not specified: latest date with sales in 2026
-    # If question asks about "a specific date" without giving one, pick 2026-08-14 as the benchmark
+    # Resolve relative periods ("this month", "last month", "this week", "yesterday", "today", etc.)
     has_date = bool(start_date)
     if not start_date:
         latest = get_latest_sales_date()
-        today_s = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%Y-%m-%d')
-        if 'yesterday' in q_low:
-            d = (datetime.utcnow() + timedelta(hours=5, minutes=30) - timedelta(days=1)).strftime('%Y-%m-%d')
-            d = min(d, latest)
-            date_label = datetime.strptime(d, '%Y-%m-%d').strftime('%d %b %Y')
-        elif 'today' in q_low:
-            d = min(today_s, latest)
-            date_label = datetime.strptime(d, '%Y-%m-%d').strftime('%d %b %Y') + ('' if d == today_s else ' (latest available; no sales synced for today yet)')
+        rel_s, rel_e, rel_lbl, rel_ok = extract_relative_period(q_low, latest)
+        if rel_ok:
+            start_date, end_date, date_label = rel_s, rel_e, rel_lbl
+            has_date = True
         else:
-            d = latest
-            date_label = datetime.strptime(d, '%Y-%m-%d').strftime('%d %b %Y') + ' (latest available date - no date was specified)'
-        start_date = end_date = d
+            start_date = end_date = latest
+            date_label = datetime.strptime(latest, '%Y-%m-%d').strftime('%d %b %Y') + ' (latest available date - no date was specified)'
 
     date_filter = f"toDate(s.date) = '{start_date}'" if start_date == end_date else f"toDate(s.date) >= '{start_date}' AND toDate(s.date) <= '{end_date}'"
 
@@ -775,10 +875,10 @@ def answer_with_nlp(question):
         'underperformed', 'underperforming', 'poorest', 'poor'
     ])
     
-    # Extract explicit limit if specified (e.g. "5 future stores", "top 3", "least 10")
-    m_lim = re.search(r'\b(?:top|least|bottom|lowest|first)?\s*(\d{1,2})\s*(?:stores?|branches?|products?|items?|campaigns?|brands?)\b', q_low)
+    # Extract explicit limit if specified (e.g. "5 future stores", "least 5 performing future stores", "top 3", "least 10")
+    m_lim = re.search(r'\b(?:top|least|bottom|lowest|first|best|worst)?\s*(\d{1,2})\s*(?:(?:least|top|best|worst|lowest|highest)\s+)?(?:perform\w*\s+)?(?:future\s+|care\s+|normal\s+|myg\s+)?(?:stores?|branches?|products?|items?|campaigns?|brands?)\b', q_low)
     if not m_lim:
-        m_lim = re.search(r'\b(?:top|least|bottom|lowest)\s+(\d{1,2})\b', q_low)
+        m_lim = re.search(r'\b(?:top|least|bottom|lowest|best|worst)\s+(\d{1,2})\b', q_low)
     limit = int(m_lim.group(1)) if m_lim else 5
     if limit <= 0: limit = 5
     if limit > 50: limit = 50
@@ -1499,53 +1599,141 @@ def answer_with_nlp(question):
                 "suggestions": [f"How much {top1['product']} was sold on {start_date}?", f"What was the total sale on {start_date}?", f"Which branch had the highest sales on {start_date}?"]
             }
 
-    # 5. BRANCH / STORE SALES (e.g. "least performed 5 future stores on 23-10-2026", "top branches", etc.)
+    # 5. BRANCH / STORE SALES (e.g. "least 5 performing future stores this month in terms of revenue", "top branches", etc.)
     if any(k in q_low for k in ['branch', 'branches', 'store', 'stores', 'location', 'locations', 'highest store', 'top branch', 'least performed', 'least performing', 'lowest store', 'worst store', 'bottom store']):
+        branch_name_expr = """multiIf(
+            s.branch = 'GPF', 'GUNDLUPETE FUTURE',
+            s.branch = 'MLF', 'MALAPPURAM FUTURE',
+            coalesce(nullIf(trim(bm.branch_name), ''), s.branch)
+        )"""
         store_type_filter = ""
         store_type_desc = "branches"
         if 'future' in q_low:
-            store_type_filter = "AND upper(coalesce(bm.branch_name, s.branch)) LIKE '%FUTURE%'"
+            store_type_filter = f"AND upper({branch_name_expr}) LIKE '%FUTURE%'"
             store_type_desc = "Future stores"
         elif 'care' in q_low:
-            store_type_filter = "AND upper(coalesce(bm.branch_name, s.branch)) LIKE '%CARE%'"
+            store_type_filter = f"AND upper({branch_name_expr}) LIKE '%CARE%'"
             store_type_desc = "Care stores"
+        elif 'normal' in q_low:
+            store_type_filter = f"AND upper({branch_name_expr}) NOT LIKE '%FUTURE%' AND upper({branch_name_expr}) NOT LIKE '%CARE%'"
+            store_type_desc = "Normal stores"
 
-        order_clause = "ORDER BY revenue ASC" if is_least else "ORDER BY revenue DESC"
-        having_clause = "HAVING revenue > 0" if is_least else ""
-        rank_word = f"least performing {store_type_desc[:-1] if store_type_desc.endswith('s') else store_type_desc}" if is_least else f"top performing {store_type_desc[:-1] if store_type_desc.endswith('s') else store_type_desc}"
-        card_label = f"Lowest {store_type_desc[:-1] if store_type_desc.endswith('s') else store_type_desc}" if is_least else f"Top {store_type_desc[:-1] if store_type_desc.endswith('s') else store_type_desc}"
+        by_rev_explicit = any(k in q_low for k in ['revenue', 'sales value', 'amount', 'value', 'turnover', 'worth'])
+        sort_by_units = is_qty_query and not by_rev_explicit
+        metric_col = "units" if sort_by_units else "revenue"
+        metric_desc = "units sold" if sort_by_units else "revenue"
+        order_clause = f"ORDER BY {metric_col} ASC, revenue ASC" if is_least else f"ORDER BY {metric_col} DESC, revenue DESC"
+        having_clause = "HAVING revenue > 0 AND units > 0" if is_least else ""
+
+        singular_desc = store_type_desc[:-1] if store_type_desc.endswith('s') else store_type_desc
+        rank_word = f"least performing {singular_desc}" if is_least else f"top performing {singular_desc}"
+        card_label = f"Lowest {singular_desc}" if is_least else f"Top {singular_desc}"
         card_color = "#ef4444" if is_least else "#4f46e5"
 
+        try:
+            span_days = (datetime.strptime(end_date, '%Y-%m-%d') - datetime.strptime(start_date, '%Y-%m-%d')).days + 1
+        except Exception:
+            span_days = 1
+        include_new_stores = bool(re.search(r'\b(include|including|with)\s+(all\s+|the\s+)?(new|newly)', q_low))
+        fetch_limit = (limit + 15) if (is_least and span_days >= 7 and not include_new_stores) else limit
+
         sql = f"""
-            SELECT coalesce(bm.branch_name, s.branch) as branch_name,
-                   sum(toFloat64(s.sold_price) * toInt64(s.qty)) as revenue,
-                   sum(if(s.sold_price < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) as units
+            SELECT s.branch AS branch_code,
+                   {branch_name_expr} AS branch_name,
+                   round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) AS revenue,
+                   sum(if(toFloat64(s.sold_price) < 0 OR s.invoice_no LIKE '%-SR-%', -toInt64(s.qty), toInt64(s.qty))) AS units,
+                   uniqExact(toDate(s.date)) AS active_days
             FROM azure_sales_report s
             LEFT JOIN branch_master bm ON bm.code = s.branch
+            LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE {date_filter}
-              AND s.branch NOT IN ('SMC', '3GH')
+              AND s.branch NOT IN ('SMC','3GH','CSB','TMC','RDS','MCL3','HAC','ECO','KSO','MRK','VSP')
+              AND positionCaseInsensitive({branch_name_expr}, 'GODOWN') = 0
+              AND positionCaseInsensitive({branch_name_expr}, 'WAREHOUSE') = 0
+              AND coalesce(im.product, '') NOT IN ('SCHEME', 'AC OUTDOOR')
+              AND coalesce(im.item_group, '') != 'SCHEME'
+              AND lower(coalesce(im.item_category, '')) != 'ac outdoor'
+              AND lower(coalesce(im.item_name, '')) NOT LIKE 'o/d%'
               {store_type_filter}
-            GROUP BY branch_name
+            GROUP BY branch_code, branch_name
             {having_clause}
             {order_clause}
-            LIMIT {limit}
+            LIMIT {fetch_limit}
         """
-        rows = run_sql(sql)
+        cand_rows = run_sql(sql) or []
+        excluded_partial = []
+
+        if cand_rows and is_least and span_days >= 7 and not include_new_stores:
+            max_active = max((int(float(r.get('active_days') or 0)) for r in cand_rows), default=0)
+            min_days_req = max(3, int(max_active * 0.5))
+            short_codes = [str(r['branch_code']) for r in cand_rows if int(float(r.get('active_days') or 0)) < min_days_req or float(r.get('revenue') or 0) < 1000]
+            first_sale_map = {}
+            if short_codes:
+                code_list_sql = ", ".join("'" + c.replace("'", "''") + "'" for c in short_codes)
+                fs_rows = run_sql(f"SELECT branch, toString(min(toDate(date))) AS first_sale FROM azure_sales_report WHERE branch IN ({code_list_sql}) GROUP BY branch") or []
+                first_sale_map = {str(fr['branch']): str(fr.get('first_sale') or '') for fr in fs_rows}
+
+            filtered = []
+            for r in cand_rows:
+                bcode = str(r.get('branch_code') or '')
+                adays = int(float(r.get('active_days') or 0))
+                brev = float(r.get('revenue') or 0)
+                fs = first_sale_map.get(bcode, '')
+                if brev < 1000 or (adays < min_days_req and fs > start_date):
+                    excluded_partial.append(r)
+                else:
+                    filtered.append(r)
+            rows = (filtered if filtered else cand_rows)[:limit]
+        else:
+            rows = cand_rows[:limit]
+
         if rows:
             top1 = rows[0]
-            ans = f"On **{date_label}**, the {rank_word} was **{top1['branch_name']}**, recording **{format_inr(top1['revenue'])}** in sales ({format_units(top1['units'])} units sold)."
+            when_prefix = f"In **{date_label}**" if is_month else (f"From **{date_label}**" if start_date != end_date else f"On **{date_label}**")
+            if len(rows) > 1:
+                others_summary = ", ".join(f"**{r['branch_name']}** ({format_inr(r['revenue'])})" for r in rows[1:min(5, len(rows))])
+                ans = (
+                    f"{when_prefix}, the {len(rows)} {'least' if is_least else 'top'} performing {store_type_desc} by {metric_desc} "
+                    f"were led {'at the bottom ' if is_least else ''}by **{top1['branch_name']}** with **{format_inr(top1['revenue'])}** "
+                    f"({format_inr_exact(top1['revenue'])}, {format_units(top1['units'])} units sold)"
+                    + (f", followed by {others_summary}." if others_summary else ".")
+                )
+            else:
+                ans = f"{when_prefix}, the {rank_word} by {metric_desc} was **{top1['branch_name']}**, recording **{format_inr(top1['revenue'])}** in sales ({format_units(top1['units'])} units sold)."
+
+            if excluded_partial:
+                ex_bits = [
+                    f"**{er['branch_name']}** ({format_inr(er['revenue'])}, {int(float(er.get('active_days') or 0))} active day{'s' if int(float(er.get('active_days') or 0)) != 1 else ''})"
+                    for er in excluded_partial[:4]
+                ]
+                ans += f" *(Note: Newly inaugurated / pre-opening stores active for only part of the period were excluded from the full-period bottom ranking: {', '.join(ex_bits)}. Ask 'including new stores' to include them.)*"
+
+            period_card_val = f"{datetime.strptime(start_date, '%Y-%m-%d').strftime('%d %b')} – {datetime.strptime(end_date, '%Y-%m-%d').strftime('%d %b %Y')}" if start_date != end_date else datetime.strptime(start_date, '%Y-%m-%d').strftime('%d %b %Y')
             cards = [
                 {"label": card_label, "value": top1['branch_name'], "color": card_color},
                 {"label": "Branch Revenue", "value": format_inr(top1['revenue']), "color": "#059669"},
-                {"label": "Units Sold", "value": format_units(top1['units']), "color": "#2563eb"}
+                {"label": "Units Sold", "value": format_units(top1['units']), "color": "#2563eb"},
+                {"label": "Period", "value": period_card_val, "color": "#7c3aed"}
             ]
-            table = {
-                "headers": ["Store Branch", "Revenue", "Units Sold"],
-                "rows": [[r['branch_name'], format_inr_exact(r['revenue']), format_units(r['units'])] for r in rows]
-            }
+            if start_date != end_date:
+                table = {
+                    "headers": ["Rank", "Store Branch", "Revenue", "Units Sold", "Active Days"],
+                    "rows": [[f"#{idx}", r['branch_name'], format_inr_exact(r['revenue']), format_units(r['units']), f"{int(float(r.get('active_days') or 0))} days"] for idx, r in enumerate(rows, 1)]
+                }
+            else:
+                table = {
+                    "headers": ["Rank", "Store Branch", "Revenue", "Units Sold"],
+                    "rows": [[f"#{idx}", r['branch_name'], format_inr_exact(r['revenue']), format_units(r['units'])] for idx, r in enumerate(rows, 1)]
+                }
+            sugg_period = "this month" if "This Month" in date_label else (f"{start_date} to {end_date}" if start_date != end_date else start_date)
+            opp_dir = "Top" if is_least else "Least"
             return {
                 "answer": ans, "sql": sql.strip(), "cards": cards, "table": table,
-                "suggestions": [f"Top {limit} {store_type_desc} on {start_date}", f"What was the total sale on {start_date}?", f"Which product was most sold on {start_date}?"]
+                "suggestions": [
+                    f"{opp_dir} {limit} {store_type_desc} {sugg_period} in terms of revenue",
+                    f"What was the total sale {sugg_period}?",
+                    f"Which product was most sold {sugg_period}?"
+                ]
             }
 
     # 6. TOTAL SALE ON A SPECIFIC DATE OR MONTH (e.g. "what was the sale on a specific date")
@@ -1737,7 +1925,11 @@ def ask_gemini(question, api_key, history=None):
     - Never count 'AC OUTDOOR' or 'SCHEME' in products
     - For revenue use: sum(toFloat64(s.sold_price) * toInt64(s.qty))
     - Limit results to at most 10 rows
-    """
+    """ + (
+        f"\n    Context: Today (IST) is {(datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%Y-%m-%d')} "
+        f"and latest synced POS date is {get_latest_sales_date()}. "
+        f"For 'this month', filter from {(datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%Y-%m-01')} to {get_latest_sales_date()}.\n"
+    )
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     payload = {
