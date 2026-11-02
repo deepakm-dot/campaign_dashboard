@@ -229,12 +229,23 @@ def extract_relative_period(q_low, latest_date_str):
         e_iso = lw_end_dt.strftime('%Y-%m-%d')
         return s_iso, e_iso, f"{_fmt(s_iso)} to {_fmt(e_iso)} (Last Week)", True
 
-    # 6. This Quarter / Current Quarter
-    if re.search(r'\b(this\s+quarter|current\s+quarter|qtd|quarter[\s-]+to[\s-]+date)\b', q_low):
+    # 6. This Quarter / Current Quarter & Last Quarter / Previous Quarter
+    if re.search(r'\b(this\s+(?:quarter|quater|qtr)|current\s+(?:quarter|quater|qtr)|qtd|quarter[\s-]+to[\s-]+date)\b', q_low):
         q_m = ((now_ist.month - 1) // 3) * 3 + 1
         s_iso = f"{now_ist.year}-{q_m:02d}-01"
         e_iso = eff_end if eff_end >= s_iso else latest
         return s_iso, e_iso, f"{_fmt(s_iso)} to {_fmt(e_iso)} (This Quarter)", True
+
+    if re.search(r'\b(last\s+(?:quarter|quater|qtr)|previous\s+(?:quarter|quater|qtr)|prev\s+(?:quarter|quater|qtr)|past\s+(?:quarter|quater|qtr))\b', q_low):
+        import calendar
+        cur_qm = ((now_ist.month - 1) // 3) * 3 + 1
+        pq_y = now_ist.year - 1 if cur_qm == 1 else now_ist.year
+        pq_m1 = 10 if cur_qm == 1 else (cur_qm - 3)
+        pq_m2 = pq_m1 + 2
+        pq_end = calendar.monthrange(pq_y, pq_m2)[1]
+        s_iso = f"{pq_y}-{pq_m1:02d}-01"
+        e_iso = f"{pq_y}-{pq_m2:02d}-{pq_end:02d}"
+        return s_iso, e_iso, f"{_fmt(s_iso)} to {_fmt(e_iso)} (Last Quarter)", True
 
     # 7. This Year / Current Year / YTD (only when not part of a YoY comparison keyword alone)
     if re.search(r'\b(this\s+year|current\s+year|ytd|year[\s-]+to[\s-]+date)\b', q_low):
@@ -357,17 +368,23 @@ def extract_periods(text):
     def add(pos, m1, m2, y, label):
         end = calendar.monthrange(y, m2)[1]
         found.append((pos, f"{y}-{m1:02d}-01", f"{y}-{m2:02d}-{end:02d}", label))
+    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     qcodes = {'jfm': (1, 3), 'amj': (4, 6), 'jas': (7, 9), 'ond': (10, 12)}
-    for m in re.finditer(r"\b(jfm|amj|jas|ond)\b\s*(?:'|-)?\s*(20\d\d|\d\d)?\b", t):
-        y = m.group(2)
-        if not y:
-            continue
-        y = int(y) if len(y) == 4 else 2000 + int(y)
+    for m in re.finditer(r"\b(jfm|amj|jas|ond)\b(?:\s+(?:quarter|quater|qtr))?(?:(?:\s*(?:'|-|of)?\s*(20\d\d))|(?:\s*(?:'|-)\s*(\d\d)))?\b", t):
         a, b = qcodes[m.group(1)]
+        y_raw = m.group(2) or m.group(3)
+        if y_raw:
+            y = int(y_raw) if len(y_raw) == 4 else 2000 + int(y_raw)
+        else:
+            y = now_ist.year if a <= now_ist.month else (now_ist.year - 1)
         add(m.start(), a, b, y, f"{m.group(1).upper()} {y}")
-    for m in re.finditer(r'\bq([1-4])\s*(?:of\s+)?(20\d\d)\b', t):
-        n, y = int(m.group(1)), int(m.group(2))
-        add(m.start(), 3 * n - 2, 3 * n, y, f"Q{n} {y}")
+    for m in re.finditer(r"\b(?:(in|for|during)\s+)?q([1-4])\b(?:\s+(quarter|quater|qtr))?(?:\s*(?:'|-|of)?\s*(20\d\d))?\b", t):
+        if not (m.group(4) or m.group(3) or m.group(1)):
+            continue
+        n = int(m.group(2))
+        a, b = 3 * n - 2, 3 * n
+        y = int(m.group(4)) if m.group(4) else (now_ist.year if a <= now_ist.month else (now_ist.year - 1))
+        add(m.start(), a, b, y, f"Q{n} {y}")
     mon = r'(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)'
     for m in re.finditer(r'\b(' + mon + r'(?:\s*(?:,|-|to|and|&)?\s*' + mon + r')*)\s*,?\s*(20\d\d)\b', t):
         names = re.findall(mon, m.group(1))
@@ -870,10 +887,17 @@ def answer_with_nlp(question):
     
     start_date, end_date, date_label, is_month = extract_dates(question)
     if not start_date:
-        # A single quarter / month span such as "JAS 2026" or "july august september 2026" -> that whole range
+        # A single quarter / month span such as "JAS 2026", "jas quater", or "july august september 2026" -> that whole range
         _single = extract_periods(question)
         if len(_single) == 1:
-            start_date, end_date, date_label, is_month = _single[0][0], _single[0][1], _single[0][2], False
+            start_date, end_date, _plab = _single[0][0], _single[0][1], _single[0][2]
+            _latest_cap = get_latest_sales_date()
+            if start_date <= _latest_cap < end_date:
+                end_date = _latest_cap
+            _s_fmt = datetime.strptime(start_date, '%Y-%m-%d').strftime('%d %b')
+            _e_fmt = datetime.strptime(end_date, '%Y-%m-%d').strftime('%d %b %Y')
+            date_label = f"{_plab} ({_s_fmt} – {_e_fmt})"
+            is_month = True
     # Detect Average Selling Price (ASP) intent:
     # ASP = Total Revenue of that Day (or Scope) / Total Unique Customer Mobile Numbers Purchased on that Day (or Scope)
     is_asp_query = bool(re.search(
@@ -2037,7 +2061,7 @@ def answer_with_nlp(question):
 
         if cand_rows and is_least and span_days >= 7 and not include_new_stores:
             max_active = max((int(float(r.get('active_days') or 0)) for r in cand_rows), default=0)
-            min_days_req = max(3, int(max_active * 0.5))
+            min_days_req = max(3, int(max_active * 0.8))
             short_codes = [str(r['branch_code']) for r in cand_rows if int(float(r.get('active_days') or 0)) < min_days_req or float(r.get('revenue') or 0) < 1000]
             first_sale_map = {}
             if short_codes:
@@ -2052,7 +2076,8 @@ def answer_with_nlp(question):
                 brev = float(r.get('revenue') or 0)
                 fs = first_sale_map.get(bcode, '')
                 if brev < 1000 or (adays < min_days_req and fs > start_date):
-                    excluded_partial.append(r)
+                    if len(filtered) < limit:
+                        excluded_partial.append(r)
                 else:
                     filtered.append(r)
             rows = (filtered if filtered else cand_rows)[:limit]
