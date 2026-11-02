@@ -1785,6 +1785,10 @@ def api_sync():
     threading.Thread(target=run_sync_cycle, daemon=True).start()
     return {"status": "started", "message": "Sync started in background"}
 
+@app.route('/api/health', method=['GET'])
+def api_health():
+    return {"status": "ok", "build": "jas-quarter-fix-v2"}
+
 @app.route('/api/sync/status', method=['GET', 'OPTIONS'])
 def api_sync_status():
     if request.method == 'OPTIONS':

@@ -2555,7 +2555,8 @@ def ask_gemini(question, api_key, history=None):
     """ + (
         f"\n    Context: Today (IST) is {(datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%Y-%m-%d')} "
         f"and latest synced POS date is {get_latest_sales_date()}. "
-        f"For 'this month', filter from {(datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%Y-%m-01')} to {get_latest_sales_date()}.\n"
+        f"For 'this month', filter from {(datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%Y-%m-01')} to {get_latest_sales_date()}. "
+        f"Quarter codes: JFM = Jan 1 to Mar 31, AMJ = Apr 1 to Jun 30, JAS = Jul 1 to Sep 30, OND = Oct 1 to Dec 31 (default to current year if past/current quarter, else previous year).\n"
     )
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
