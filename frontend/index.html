@@ -1040,10 +1040,10 @@
     </div>
     <div class="sidebar-footer">
       <div class="sync-badge">
-        <div class="pulse"></div>
+        <div class="pulse" style="animation:none;"></div>
         <div>
-          <div style="font-size:11px;font-weight:700;">Auto-Sync Active</div>
-          <div style="font-size:10px;opacity:0.8;color:#059669;">Live Sync (Every 45s)</div>
+          <div style="font-size:11px;font-weight:700;">Manual Sync Mode</div>
+          <div style="font-size:10px;opacity:0.8;color:#059669;">Use &ldquo;Sync Live Data&rdquo;</div>
         </div>
       </div>
     </div>
@@ -3133,9 +3133,9 @@ async function autoCheckSync() {
     _wasSyncing = !!data.is_syncing;
   } catch (e) {}
 }
-setInterval(autoCheckSync, 8000);
-autoCheckSync();
-setInterval(() => { loadAll(); }, 300000);
+// Auto-sync background polling disabled — sync runs only on manual "Sync Live Data" click
+
+
 
 loadAll();
 

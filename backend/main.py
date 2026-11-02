@@ -1862,7 +1862,7 @@ class ThreadedWSGIRefServer(ServerAdapter):
 _SYNC_THREAD_STARTED = False
 def _start_sync_thread():
     global _SYNC_THREAD_STARTED
-    if not _SYNC_THREAD_STARTED and not os.environ.get('NO_SYNC_WORKER'):
+    if not _SYNC_THREAD_STARTED and os.environ.get('AUTO_SYNC_WORKER') == '1':
         _SYNC_THREAD_STARTED = True
         sync_thread = threading.Thread(target=background_sync_worker, daemon=True)
         sync_thread.start()
