@@ -13,7 +13,15 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.insert(0, BASE_DIR)
 import ch_db
+import segment_kpi
 
+def _refresh_segments(camp, branch_cond, force, cache, **overrides):
+    """Store Data vs External Data KPI split. Never lets a failure here break the main KPI run."""
+    try:
+        view = dict(camp); view.update(overrides)
+        segment_kpi.refresh_for_campaign(view, branch_cond=branch_cond, force=force, cache=cache)
+    except Exception as e_seg:
+        print(f"  Segment KPI skipped for [{camp.get('id')}]: {e_seg}", flush=True)
 SHEETS_URL = "https://script.google.com/macros/s/AKfycbwLu3feQq0BCxUFFxpUhamKLfNa5njxmJLZ4yBRY9pmPtsgBIXEFSzeVADBt5hlG9Y_DQ/exec"
 CH_URL  = ch_db.CH_URL
 CH_USER = ch_db.CH_USER
@@ -227,6 +235,7 @@ from datetime import datetime, timedelta
 LIVE_REFRESH_MINUTES = 10
 KPI_TS_PREFIX = 'kpi_refreshed:'
 kpi_refreshed = ch_db.get_configs(KPI_TS_PREFIX)
+seg_cache = segment_kpi.load_all()   # stored Store/External splits (one query)
 _cutoff = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
 
 def _needs_live_refresh(camp):
@@ -262,6 +271,12 @@ for camp in camps:
     p_cnt = int(camp['purchase_count'] or 0)
     n_cnt = int(camp['new_customers'] or 0)
     e_cnt = int(camp['existing_customers'] or 0)
+
+    branch_cond = f"branch = '{branch}'"
+    if "mavoor road" in camp_name.lower():
+        branch_cond = "branch IN ('KIN', 'LAN', 'MAH', 'PCT', 'PUT', 'SBM', 'CAM')"
+    branch_filter = f"AND {branch_cond}" if branch or "mavoor road" in camp_name.lower() else ""
+    seg_branch_cond = branch_cond if (branch or "mavoor road" in camp_name.lower()) else ""
     
     last_kpi_ts = float(kpi_refreshed.get(f"{KPI_TS_PREFIX}{camp_id}", 0) or 0)
     if not branch_just_resolved and p_cnt == 0 and last_kpi_ts > 0 and (time.time() - last_kpi_ts) < LIVE_REFRESH_MINUTES * 60:
@@ -275,15 +290,13 @@ for camp in camps:
         roi = (p_val / budget) if budget > 0 else 0
         _update_if_changed(camp, {'conversion_rate': float(conv_rate), 'roi': float(roi),
                                   'budget': float(budget), 'target_size': int(sms_delivered)})
+        # Store Data vs External Data split (computed once, then only when the campaign's numbers change)
+        _refresh_segments(camp, seg_branch_cond, False, seg_cache, conversion_rate=float(conv_rate), roi=float(roi),
+                          budget=float(budget), target_size=int(sms_delivered))
         print(f"[{camp_id}] {camp_name} is already processed. Updated conv/roi. Skipping heavy attribution...", flush=True)
         continue
 
     print(f"\n[{camp_id}] {camp_name} | {camp['type']} | {start_dt}→{end_dt} | branch={branch} | SMS Delivered={sms_delivered}", flush=True)
-
-    branch_cond = f"branch = '{branch}'"
-    if "mavoor road" in camp_name.lower():
-        branch_cond = "branch IN ('KIN', 'LAN', 'MAH', 'PCT', 'PUT', 'SBM', 'CAM')"
-    branch_filter = f"AND {branch_cond}" if branch or "mavoor road" in camp_name.lower() else ""
 
     # ATTRIBUTION: one ClickHouse query finds the store/state purchasers in the date window
     # who are ALSO in this campaign's customer list (the campaign_customers table is in ClickHouse too).
@@ -385,6 +398,8 @@ for camp in camps:
         'top_brands': json.dumps(top_brands), 'top_categories': json.dumps(top_cats),
     })
     ch_db.set_config(f"{KPI_TS_PREFIX}{camp_id}", int(time.time()))
+    _refresh_segments(camp, seg_branch_cond, True, seg_cache, purchase_count=purchase_count, purchase_value=total_revenue,
+                      conversion_rate=conv_rate, roi=roi, budget=budget, target_size=sms_delivered, branch_code=branch)
     print(f"  ✅ Updated.", flush=True)
 
 print("\n=== DONE ===", flush=True)

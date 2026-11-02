@@ -1537,7 +1537,14 @@ def get_campaigns():
     try:
         df = get_period_filter_sql()
         campaigns = []
+        try:
+            import segment_kpi
+            seg_map = segment_kpi.load_all()   # Store Data vs External Data KPI split per campaign
+        except Exception as e_seg:
+            print(f"[SEGMENT KPI] could not load: {e_seg}")
+            seg_map = {}
         for camp in ch_db.list_campaigns(df, order_by='start_date DESC, id ASC'):
+            camp['segments'] = seg_map.get(int(camp['id']))
             # Parse JSON fields stored as strings
             try:
                 camp['top_brands'] = json.loads(camp.get('top_brands') or '[]')

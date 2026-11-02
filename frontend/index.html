@@ -2049,6 +2049,41 @@ function buildGroupGrid(){
     return minA - minB;
   });
 
+  // Store Data (bought at any store before campaign start) vs External Data (never bought before) KPI split
+  function segBreakdownHtml(c){
+    const sg = c.segments;
+    if(!sg || !sg.store || !sg.external) return '';
+    const fRoi = v => (v === null || v === undefined) ? '&mdash;' : Number(v).toLocaleString('en-IN', {maximumFractionDigits: 0});
+    const fConv = v => (v === null || v === undefined) ? '&mdash;' : pct(v);
+    const th = 'text-align:right;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);padding:4px 10px;';
+    const td = 'text-align:right;font-size:12px;font-weight:700;padding:5px 10px;';
+    const row = (label, dot, s, bold) => `
+      <tr style="${bold ? 'background:#eef2ff;' : ''}">
+        <td style="font-size:11px;font-weight:800;padding:5px 10px;white-space:nowrap;color:var(--text);"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dot};margin-right:6px;"></span>${label}</td>
+        <td style="${td}color:#475569;">${num(s.audience || 0)}</td>
+        <td style="${td}color:#4f46e5;">${num(s.purchases || 0)}</td>
+        <td style="${td}color:#059669;">${inr(s.revenue || 0)}</td>
+        <td style="${td}color:#64748b;">${fConv(s.conversion_rate)}</td>
+        <td style="${td}color:#d97706;">${fRoi(s.roi)}</td>
+      </tr>`;
+    const ov = sg.overall || {audience: (sg.store.audience||0)+(sg.external.audience||0), purchases: c.purchase_count, revenue: c.purchase_value, conversion_rate: c.conversion_rate, roi: c.roi};
+    return `
+      <div class="camp-seg-wrap" onclick="event.stopPropagation()" style="margin:-4px 0 10px 0;padding:6px 10px 8px;background:#fafbff;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 10px 10px;overflow-x:auto;"
+           title="Store Data = campaigned customers who purchased from any store before the campaign start date. External Data = campaigned customers with no purchase before the campaign start date. Delivered audience and cost are shared in proportion to audience size.">
+        <table style="width:100%;border-collapse:collapse;">
+          <thead><tr>
+            <th style="${th}text-align:left;">Data type</th><th style="${th}">Audience</th><th style="${th}">Purchases</th>
+            <th style="${th}">Revenue</th><th style="${th}">Conv %</th><th style="${th}">ROI</th>
+          </tr></thead>
+          <tbody>
+            ${row('Store Data', '#6366f1', sg.store, false)}
+            ${row('External Data', '#f59e0b', sg.external, false)}
+            ${row('Overall', '#10b981', ov, true)}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
   container.innerHTML = groupNames.map((g, idx)=>{
     const camps = grouped[g];
     const col = GROUP_COLORS[idx % GROUP_COLORS.length];
@@ -2115,7 +2150,7 @@ function buildGroupGrid(){
               ${roiHtml}
             </div>
           </div>
-        </div>`;
+        </div>${segBreakdownHtml(c)}`;
     }).join('');
 
     const totalsRowHtml = `
