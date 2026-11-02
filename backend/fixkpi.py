@@ -401,4 +401,11 @@ for camp in camps:
                       conversion_rate=conv_rate, roi=roi, budget=budget, target_size=sms_delivered, branch_code=branch)
     print(f"  ✅ Updated.", flush=True)
 
+try:
+    gu = segment_kpi.refresh_global_unique_split(force=False)
+    print(f"Global unique audience: {gu.get('unique_customers', 0):,} "
+          f"(Store: {gu.get('store_customers', 0):,}, External: {gu.get('external_customers', 0):,})", flush=True)
+except Exception as e_gu:
+    print(f"Global unique audience skipped: {e_gu}", flush=True)
+
 print("\n=== DONE ===", flush=True)

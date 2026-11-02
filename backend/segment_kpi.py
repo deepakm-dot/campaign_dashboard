@@ -24,6 +24,9 @@ import time
 import ch_db
 
 CONFIG_PREFIX = 'seg_kpi:'
+GLOBAL_UNIQUE_KEY = 'global_unique_audience'
+_PERIOD_UNIQUE_CACHE = {}
+_PERIOD_CACHE_TTL = 300
 
 
 def _f(v):
@@ -165,3 +168,116 @@ def refresh_for_campaign(camp, branch_cond=None, force=False, cache=None):
     if cache is not None:
         cache[cid] = seg
     return seg
+
+
+def compute_unique_split_for_campaigns(camps):
+    """Deduplicated unique customers across `camps`, classified into Store Data vs External Data
+    using each customer's earliest campaign start_date and ch_db's dual-table purchase history
+    (azure_invoice_report + sales_data, strictly read-only via ch_db.query)."""
+    camp_dates = []
+    for c in (camps or []):
+        cid = int(c.get('id') or 0)
+        sd = str(c.get('start_date') or '')[:10]
+        if cid > 0 and len(sd) == 10:
+            camp_dates.append((cid, sd))
+    if not camp_dates:
+        return {'unique_customers': 0, 'store_customers': 0, 'external_customers': 0}
+
+    ids_sql = ','.join(str(cid) for cid, _ in camp_dates)
+    min_sd = min(sd for _, sd in camp_dates)
+    max_sd = max(sd for _, sd in camp_dates)
+    case_sql = (
+        'multiIf('
+        + ', '.join(f"campaign_id = {cid}, toDate('{sd}')" for cid, sd in camp_dates)
+        + f", toDate('{min_sd}'))"
+    )
+    sql = f"""
+        WITH uniq_cust AS (
+            SELECT customer_mobile, min({case_sql}) AS first_camp_date
+            FROM {ch_db.T_CUST}
+            WHERE source_db = '{ch_db.SRC}' AND campaign_id IN ({ids_sql})
+            GROUP BY customer_mobile
+        ),
+        hist AS (
+            SELECT customer_mobile, min(pdate) AS first_purchase_date
+            FROM (
+                SELECT customer_mobile, toDate(date) AS pdate
+                FROM azure_invoice_report
+                WHERE toDate(date) >= '2020-01-01' AND toDate(date) < '{max_sd}'
+                  AND customer_mobile != ''
+                UNION ALL
+                SELECT customer_mobile, parsed_date AS pdate
+                FROM sales_data
+                WHERE parsed_date >= '2020-01-01' AND parsed_date < '{max_sd}'
+                  AND total_value > 0 AND customer_mobile != ''
+            )
+            GROUP BY customer_mobile
+        )
+        SELECT
+            count() AS unique_customers,
+            countIf(h.first_purchase_date > toDate('1970-01-02') AND h.first_purchase_date < u.first_camp_date) AS store_customers
+        FROM uniq_cust u
+        LEFT JOIN hist h ON u.customer_mobile = h.customer_mobile
+    """
+    rows = ch_db.query(sql, timeout=180, quote64=True)
+    row = rows[0] if rows else {}
+    total_u = int(_f(row.get('unique_customers')))
+    store_u = int(_f(row.get('store_customers')))
+    ext_u = max(0, total_u - store_u)
+    return {
+        'unique_customers': total_u,
+        'store_customers': store_u,
+        'external_customers': ext_u,
+    }
+
+
+def refresh_global_unique_split(force=False):
+    """Compute and cache All-Time unique / Store Data / External Data customer counts in config."""
+    camps = ch_db.list_campaigns(order_by='id')
+    cust_counts = ch_db.customer_counts()
+    max_sd = max(((c.get('start_date') or '')[:10] for c in camps), default='')
+    sig = f"{len(camps)}:{sum(cust_counts.values())}:{max_sd}"
+
+    if not force:
+        raw = ch_db.get_config(GLOBAL_UNIQUE_KEY)
+        if raw:
+            try:
+                cur = json.loads(raw)
+                if cur.get('sig') == sig and int(cur.get('unique_customers') or 0) > 0:
+                    return cur
+            except Exception:
+                pass
+
+    res = compute_unique_split_for_campaigns(camps)
+    res['sig'] = sig
+    res['computed_at'] = int(time.time())
+    ch_db.set_config(GLOBAL_UNIQUE_KEY, json.dumps(res))
+    return res
+
+
+def get_unique_split_for_period(period_filter_sql=''):
+    """Fast lookup for /api/dashboard/stats: uses cached config for All Time, or TTL cache for filtered periods."""
+    if not period_filter_sql:
+        raw = ch_db.get_config(GLOBAL_UNIQUE_KEY)
+        if raw:
+            try:
+                cur = json.loads(raw)
+                if int(cur.get('unique_customers') or 0) > 0:
+                    return cur
+            except Exception:
+                pass
+        return refresh_global_unique_split(force=True)
+
+    camps = ch_db.list_campaigns(period_filter_sql, order_by='id')
+    if not camps:
+        return {'unique_customers': 0, 'store_customers': 0, 'external_customers': 0}
+
+    key = tuple((int(c['id']), (c.get('start_date') or '')[:10]) for c in camps)
+    now = time.time()
+    cached = _PERIOD_UNIQUE_CACHE.get(key)
+    if cached and (now - cached[0]) < _PERIOD_CACHE_TTL:
+        return cached[1]
+
+    res = compute_unique_split_for_campaigns(camps)
+    _PERIOD_UNIQUE_CACHE[key] = (now, res)
+    return res

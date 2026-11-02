@@ -779,6 +779,11 @@ def _sync_campaign_data():
 
             calculate_kpis_for_campaign(camp_id, start_date, camp_end_date, budget)
 
+        try:
+            import segment_kpi
+            segment_kpi.refresh_global_unique_split(force=False)
+        except Exception as e_gu:
+            print(f"[BACKGROUND SYNC] Global unique split skipped: {e_gu}")
         print(f"[BACKGROUND SYNC] Finished syncing data for campaigns.")
     except Exception as e:
         print(f"[BACKGROUND SYNC ERROR] Data sync failed: {e}")
@@ -1601,9 +1606,19 @@ def get_dashboard_stats():
         if total_reached == 0:
             total_reached = int(row.get('sum_target') or 0)
 
+        uniq_split = {'unique_customers': 0, 'store_customers': 0, 'external_customers': 0}
+        try:
+            import segment_kpi
+            uniq_split = segment_kpi.get_unique_split_for_period(df) or uniq_split
+        except Exception as e_u:
+            print(f"[STATS UNIQUE SPLIT] {e_u}")
+
         stats = {
             "total_campaigns": total_campaigns,
-            "total_reached":   total_reached,
+            "total_reached":      total_reached,
+            "unique_customers":   int(uniq_split.get('unique_customers') or 0),
+            "store_customers":    int(uniq_split.get('store_customers') or 0),
+            "external_customers": int(uniq_split.get('external_customers') or 0),
             "total_sales":     float(row.get('total_sales') or 0),
             "avg_roi":         float(row.get('avg_roi')     or 0)
         }

@@ -84,6 +84,20 @@
     .kpi-card.c4 .kpi-value { color:#d97706; }
     .kpi-sub { font-size:11px; color:var(--muted); margin-top:8px; }
     .kpi-icon { position:absolute; right:20px; top:20px; font-size:44px; opacity:0.07; }
+    .kpi-reach-bk { margin-top:10px; display:flex; flex-direction:column; gap:6px; }
+    .kr-dot { width:7px; height:7px; border-radius:50%; display:inline-block; flex-shrink:0; }
+    .kr-uniq-row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 10px; border-radius:8px; background:#ecfdf5; border:1px solid rgba(5,150,105,0.22); flex-wrap:wrap; }
+    .kr-uniq-lbl { font-size:11px; font-weight:700; color:#065f46; display:inline-flex; align-items:center; gap:6px; }
+    .kr-uniq-val { font-size:13px; font-weight:800; color:#059669; font-variant-numeric:tabular-nums; }
+    .kr-seg-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+    @media (max-width: 1180px) { .kr-seg-grid { grid-template-columns:1fr; } }
+    .kr-seg-box { padding:6px 9px; border-radius:8px; display:flex; flex-direction:column; gap:2px; }
+    .kr-seg-store { background:#eef2ff; border:1px solid rgba(99,102,241,0.22); }
+    .kr-seg-ext { background:#fffbeb; border:1px solid rgba(245,158,11,0.28); }
+    .kr-seg-top { display:flex; align-items:center; justify-content:space-between; gap:4px; font-size:10px; font-weight:700; color:#334155; white-space:nowrap; }
+    .kr-seg-pct { font-size:9.5px; font-weight:700; padding:1px 5px; border-radius:10px; background:rgba(255,255,255,0.75); color:#475569; }
+    .kr-seg-val { font-size:13px; font-weight:800; font-variant-numeric:tabular-nums; line-height:1.25; }
+    .kr-exact { font-size:10px; font-weight:600; color:#64748b; margin-left:3px; }
 
     /* CARDS */
     .card { background:var(--card); border:1px solid var(--border); border-radius:14px; overflow:hidden; box-shadow:var(--shadow); }
@@ -1073,7 +1087,7 @@
 
       <div class="kpi-grid">
         <div class="kpi-card c1 fu fu1"><div class="kpi-icon">&#x1F3AF;</div><div class="kpi-label">Total Campaigns</div><div class="kpi-value" id="kv-camps">&#x2014;</div><div class="kpi-sub">Synced from Google Sheets</div></div>
-        <div class="kpi-card c2 fu fu2"><div class="kpi-icon">&#x1F465;</div><div class="kpi-label">Audience Reached</div><div class="kpi-value" id="kv-reach">&#x2014;</div><div class="kpi-sub">Total customer targets</div></div>
+        <div class="kpi-card c2 fu fu2"><div class="kpi-icon">&#x1F465;</div><div class="kpi-label">Audience Reached</div><div class="kpi-value" id="kv-reach">&#x2014;</div><div class="kpi-sub" id="kv-reach-sub">Total customer targets</div><div class="kpi-reach-bk" id="kv-reach-bk" style="display:none;"></div></div>
         <div class="kpi-card c3 fu fu3"><div class="kpi-icon">&#x1F4B0;</div><div class="kpi-label">Total Revenue</div><div class="kpi-value" id="kv-rev">&#x2014;</div><div class="kpi-sub" id="kv-rev-sub">Verified via ClickHouse</div></div>
       </div>
 
@@ -1399,6 +1413,45 @@ async function loadAll(){
     // Add exact numerical revenue in small text
     const exactRev = Math.round(stats.total_sales||0).toLocaleString('en-IN');
     document.getElementById('kv-rev-sub').innerHTML = `Verified via ClickHouse &bull; Exact: &#x20B9;${exactRev}`;
+
+    const exactReach = Math.round(stats.total_reached||0).toLocaleString('en-IN');
+    const reachSubEl = document.getElementById('kv-reach-sub');
+    if (reachSubEl) {
+      reachSubEl.innerHTML = `Total customer targets &bull; Exact: ${exactReach}`;
+    }
+    const reachBkEl = document.getElementById('kv-reach-bk');
+    const uniqCust = Math.round(Number(stats.unique_customers) || 0);
+    const storeCust = Math.round(Number(stats.store_customers) || 0);
+    const extCust = Math.round(Number(stats.external_customers) || 0);
+    if (reachBkEl && uniqCust > 0) {
+      const fmtCompact = (v) => {
+        if (v >= 1e7) return (v / 1e7).toFixed(2) + 'Cr';
+        if (v >= 1e5) return (v / 1e5).toFixed(2) + 'L';
+        if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+        return v.toLocaleString('en-IN');
+      };
+      const stPct = ((storeCust / uniqCust) * 100).toFixed(1);
+      const exPct = ((extCust / uniqCust) * 100).toFixed(1);
+      reachBkEl.style.display = 'flex';
+      reachBkEl.innerHTML = `
+        <div class="kr-uniq-row" title="Deduplicated 10-digit mobile numbers targeted across campaigns">
+          <span class="kr-uniq-lbl"><span class="kr-dot" style="background:#10b981;"></span>Unique Customers</span>
+          <span class="kr-uniq-val">${fmtCompact(uniqCust)} <span class="kr-exact" style="color:#047857;">(${uniqCust.toLocaleString('en-IN')})</span></span>
+        </div>
+        <div class="kr-seg-grid">
+          <div class="kr-seg-box kr-seg-store" title="Unique campaigned customers who had purchased at any MyG store prior to their first campaign">
+            <div class="kr-seg-top"><span><span class="kr-dot" style="background:#6366f1;margin-right:5px;"></span>Store Data</span><span class="kr-seg-pct">${stPct}%</span></div>
+            <div class="kr-seg-val" style="color:#4f46e5;">${fmtCompact(storeCust)}<span class="kr-exact">(${storeCust.toLocaleString('en-IN')})</span></div>
+          </div>
+          <div class="kr-seg-box kr-seg-ext" title="Unique campaigned customers with no MyG purchase prior to their first campaign">
+            <div class="kr-seg-top"><span><span class="kr-dot" style="background:#f59e0b;margin-right:5px;"></span>External Data</span><span class="kr-seg-pct">${exPct}%</span></div>
+            <div class="kr-seg-val" style="color:#d97706;">${fmtCompact(extCust)}<span class="kr-exact">(${extCust.toLocaleString('en-IN')})</span></div>
+          </div>
+        </div>`;
+    } else if (reachBkEl) {
+      reachBkEl.style.display = 'none';
+      reachBkEl.innerHTML = '';
+    }
 
     buildTrend(report.trend||[]);
     buildMonthFilter(allCamps);
