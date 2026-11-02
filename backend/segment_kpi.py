@@ -67,8 +67,7 @@ def compute_segments(camp_id, start_dt, end_dt, branch_cond, delivered_total, bu
         FROM (
             SELECT customer_mobile,
                    customer_mobile IN (
-                       SELECT DISTINCT customer_mobile FROM azure_invoice_report
-                       WHERE toDate(date) >= '2020-01-01' AND toDate(date) < '{start_dt}'
+                       SELECT DISTINCT customer_mobile FROM ({ch_db.purchase_history_sql(start_dt)})
                    ) AS is_store
             FROM (SELECT DISTINCT customer_mobile FROM {ch_db.T_CUST}
                   WHERE source_db = '{ch_db.SRC}' AND campaign_id = {int(camp_id)})

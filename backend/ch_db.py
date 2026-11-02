@@ -310,6 +310,21 @@ def copy_customers(from_campaign_id, to_campaign_id):
             f"WHERE source_db = '{SRC}' AND campaign_id = {f}")
 
 
+def purchase_history_sql(before_date, mobiles_in=None):
+    """SELECT of customer_mobile for every customer who purchased at ANY store before `before_date` (YYYY-MM-DD).
+
+    Purchase history lives in TWO warehouse tables: azure_invoice_report (daily feed) and sales_data (DSR files).
+    azure_invoice_report has no invoices at all for 1-12 Apr 2026 (and a few missing in Sep 2026) which sales_data
+    does have, so the history is the UNION of both. sales_data rows must be real sales (total_value > 0).
+    `mobiles_in` is an optional SQL fragment for an `IN (...)` filter on customer_mobile."""
+    f_a = f" AND customer_mobile IN ({mobiles_in})" if mobiles_in else ""
+    return (f"SELECT customer_mobile FROM azure_invoice_report "
+            f"WHERE toDate(date) >= '2020-01-01' AND toDate(date) < '{before_date}'{f_a} "
+            f"UNION ALL "
+            f"SELECT customer_mobile FROM sales_data "
+            f"WHERE parsed_date >= '2020-01-01' AND parsed_date < '{before_date}' AND total_value > 0{f_a}")
+
+
 def delete_staging():
     """Remove leftovers of an interrupted customer reload (staging rows use a negative campaign_id)."""
     n = query(f"SELECT count() AS n FROM {T_CUST} WHERE source_db = '{SRC}' AND campaign_id < 0")

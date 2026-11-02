@@ -526,9 +526,8 @@ def calculate_kpis_for_campaign(campaign_id, start_date, end_date, budget):
     for j in range(0, len(matched_list), 10000):
         ch = matched_list[j:j+10000]
         m_str = ", ".join(f"'{m}'" for m in ch)
-        hist_sql = (f"SELECT DISTINCT customer_mobile FROM azure_invoice_report "
-                    f"WHERE customer_mobile IN ({m_str}) "
-                    f"  AND toDate(date) >= '2020-01-01' AND toDate(date) < '{query_start}'")
+        hist_sql = (f"SELECT DISTINCT customer_mobile FROM ("
+                    f"{ch_db.purchase_history_sql(query_start, m_str)})")
         for r in query_clickhouse(hist_sql):
             repeat_customers.add(r.get('customer_mobile'))
 
@@ -1123,7 +1122,11 @@ def get_campaign_store_sales(campaign_id):
         FROM (
             SELECT customer_mobile,
                    MAX(if(toDate(date) >= '2020-01-01' AND toDate(date) < '{start_date}', 1, 0)) as has_history
-            FROM azure_invoice_report
+            FROM (
+                SELECT customer_mobile, date FROM azure_invoice_report
+                UNION ALL
+                SELECT customer_mobile, parsed_date AS date FROM sales_data WHERE total_value > 0
+            )
             WHERE customer_mobile IN (
                 SELECT DISTINCT customer_mobile 
                 FROM azure_invoice_report 

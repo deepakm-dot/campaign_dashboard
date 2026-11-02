@@ -324,9 +324,8 @@ for camp in camps:
     for j in range(0, len(matched_list), 10000):
         ch = matched_list[j:j+10000]
         m_str = ", ".join(f"'{m}'" for m in ch)
-        hist_sql = (f"SELECT DISTINCT customer_mobile FROM azure_invoice_report "
-                    f"WHERE customer_mobile IN ({m_str}) "
-                    f"  AND toDate(date) >= '2020-01-01' AND toDate(date) < '{start_dt}'")
+        hist_sql = (f"SELECT DISTINCT customer_mobile FROM ("
+                    f"{ch_db.purchase_history_sql(str(start_dt)[:10], m_str)})")
         for r in query_clickhouse(hist_sql):
             repeat_customers.add(r.get('customer_mobile'))
 
