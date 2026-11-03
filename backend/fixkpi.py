@@ -19,9 +19,10 @@ def _refresh_segments(camp, branch_cond, force, cache, **overrides):
     """Store Data vs External Data KPI split. Never lets a failure here break the main KPI run."""
     try:
         view = dict(camp); view.update(overrides)
-        segment_kpi.refresh_for_campaign(view, branch_cond=branch_cond, force=force, cache=cache)
+        return segment_kpi.refresh_for_campaign(view, branch_cond=branch_cond, force=force, cache=cache)
     except Exception as e_seg:
         print(f"  Segment KPI skipped for [{camp.get('id')}]: {e_seg}", flush=True)
+        return None
 SHEETS_URL = "https://script.google.com/macros/s/AKfycbwLu3feQq0BCxUFFxpUhamKLfNa5njxmJLZ4yBRY9pmPtsgBIXEFSzeVADBt5hlG9Y_DQ/exec"
 CH_URL  = ch_db.CH_URL
 CH_USER = ch_db.CH_USER
@@ -291,8 +292,13 @@ for camp in camps:
         _update_if_changed(camp, {'conversion_rate': float(conv_rate), 'roi': float(roi),
                                   'budget': float(budget), 'target_size': int(sms_delivered)})
         # Store Data vs External Data split (computed once, then only when the campaign's numbers change)
-        _refresh_segments(camp, seg_branch_cond, False, seg_cache, conversion_rate=float(conv_rate), roi=float(roi),
-                          budget=float(budget), target_size=int(sms_delivered))
+        seg_res = _refresh_segments(camp, seg_branch_cond, False, seg_cache, conversion_rate=float(conv_rate), roi=float(roi),
+                                    budget=float(budget), target_size=int(sms_delivered))
+        if seg_res and 'store' in seg_res and 'external' in seg_res:
+            s_p = int(seg_res['store'].get('purchases') or 0)
+            e_p = int(seg_res['external'].get('purchases') or 0)
+            if s_p + e_p == p_cnt:
+                _update_if_changed(camp, {'existing_customers': s_p, 'new_customers': e_p})
         print(f"[{camp_id}] {camp_name} is already processed. Updated conv/roi. Skipping heavy attribution...", flush=True)
         continue
 
@@ -318,21 +324,28 @@ for camp in camps:
     purchaser_map = {r['customer_mobile']: float(r.get('customer_total', 0) or 0) for r in purchasers if r.get('customer_mobile')}
     matched_mobiles = set(purchaser_map.keys())
 
-    # Check history (New vs Repeat) only for the matched purchasers
-    repeat_customers = set()
-    matched_list = list(matched_mobiles)
-    for j in range(0, len(matched_list), 10000):
-        ch = matched_list[j:j+10000]
-        m_str = ", ".join(f"'{m}'" for m in ch)
-        hist_sql = (f"SELECT DISTINCT customer_mobile FROM ("
-                    f"{ch_db.purchase_history_sql(str(start_dt)[:10], m_str)})")
-        for r in query_clickhouse(hist_sql):
-            repeat_customers.add(r.get('customer_mobile'))
-
     purchase_count = len(matched_mobiles)
     total_revenue = sum(purchaser_map[m] for m in matched_mobiles)
-    existing_customers = len(repeat_customers)
-    new_customers = purchase_count - existing_customers
+
+    # Check history (New vs Repeat) server-side in ClickHouse (avoids 256 KB max_query_size overflow on 10k+ buyers)
+    existing_customers = 0
+    if purchase_count > 0:
+        buyer_subq = (f"SELECT customer_mobile FROM azure_invoice_report "
+                      f"WHERE toDate(date) >= '{start_dt}' AND toDate(date) <= '{end_dt}' {branch_filter} "
+                      f"AND customer_mobile IN ({cust_subq}) "
+                      f"GROUP BY customer_mobile HAVING SUM(invoice_total) > 0")
+        try:
+            hist_rows = ch_db.query(
+                f"SELECT countIf(customer_mobile IN ("
+                f"SELECT DISTINCT customer_mobile FROM ({ch_db.purchase_history_sql(str(start_dt)[:10])})"
+                f")) AS repeat_buyers FROM ({buyer_subq})",
+                timeout=180
+            )
+            existing_customers = int((hist_rows[0] if hist_rows else {}).get('repeat_buyers') or 0)
+        except Exception as e_hist:
+            print(f"  ClickHouse history ERROR (skipping campaign this cycle): {e_hist}", flush=True)
+            continue
+    new_customers = max(0, purchase_count - existing_customers)
 
     # Use SMS Delivered as audience denominator
     conv_rate = (purchase_count / sms_delivered * 100) if sms_delivered > 0 else 0

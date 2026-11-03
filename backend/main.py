@@ -566,8 +566,8 @@ def calculate_kpis_for_campaign(campaign_id, start_date, end_date, budget):
     # Check history (New vs Repeat) only for the matched purchasers
     repeat_customers = set()
     matched_list = list(unique_customers)
-    for j in range(0, len(matched_list), 10000):
-        ch = matched_list[j:j+10000]
+    for j in range(0, len(matched_list), 3000):
+        ch = matched_list[j:j+3000]
         m_str = ", ".join(f"'{m}'" for m in ch)
         hist_sql = (f"SELECT DISTINCT customer_mobile FROM ("
                     f"{ch_db.purchase_history_sql(query_start, m_str)})")
@@ -1601,7 +1601,14 @@ def get_campaigns():
             print(f"[SEGMENT KPI] could not load: {e_seg}")
             seg_map = {}
         for camp in ch_db.list_campaigns(df, order_by='start_date DESC, id ASC'):
-            camp['segments'] = seg_map.get(int(camp['id']))
+            seg = seg_map.get(int(camp['id']))
+            camp['segments'] = seg
+            if seg and 'store' in seg and 'external' in seg:
+                sp = int(seg['store'].get('purchases') or 0)
+                ep = int(seg['external'].get('purchases') or 0)
+                if sp + ep == int(camp.get('purchase_count') or 0):
+                    camp['existing_customers'] = sp
+                    camp['new_customers'] = ep
             # Parse JSON fields stored as strings
             try:
                 camp['top_brands'] = json.loads(camp.get('top_brands') or '[]')
@@ -1836,7 +1843,7 @@ def api_sync():
 
 @app.route('/api/health', method=['GET'])
 def api_health():
-    return {"status": "ok", "build": "pos-dsr-smc-3gh-fix"}
+    return {"status": "ok", "build": "repeat-new-maxquery-fix"}
 
 @app.route('/api/sync/status', method=['GET', 'OPTIONS'])
 def api_sync_status():
