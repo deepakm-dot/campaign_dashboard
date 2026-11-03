@@ -2192,21 +2192,24 @@ def answer_with_nlp(question):
             store_scope_lbl_6 = "Normal Store"
             store_branches_lbl_6 = "Normal branches"
 
-    retail_cond = f"({RETAIL_STORE_FILTER_SQL}){store_type_cond_6} AND coalesce(im.product, '') != 'SCHEME' AND coalesce(im.item_group, '') != 'SCHEME'"
+    pos_branch_scope_6 = f"({RETAIL_STORE_FILTER_SQL}){store_type_cond_6}" if store_type_cond_6 else "s.branch NOT IN ('SMC', '3GH')"
+    retail_cond = f"({pos_branch_scope_6}) AND coalesce(im.product, '') != 'SCHEME' AND coalesce(im.item_group, '') != 'SCHEME'"
+    dsr_qty_6 = "if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), if(coalesce(im.product, '') = 'SERVICE', 0, toInt64(s.qty)))"
+    dec_line_6 = "toDecimal64(toString(s.sold_price), 4) * toInt64(s.qty)"
     need_mob_6 = is_asp_query or (is_compare and bool(prev_date_filter))
     inv_join_6 = build_inv_mobile_join_sql(date_filter) if need_mob_6 else ""
     mob_sel_6 = f",\n            uniqExactIf({CUST_MOB_NORM_EXPR}, ({retail_cond}) AND {CUST_MOB_VALID_EXPR}) as retail_uniq_customers" if need_mob_6 else ""
 
     sql = f"""
         SELECT 
-            round(sumIf(toFloat64(s.sold_price) * toInt64(s.qty), {retail_cond}), 2) as retail_sales,
-            sumIf({POS_UNITS_EXPR}, {retail_cond}) as retail_units,
-            count(DISTINCT if({retail_cond} AND toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as retail_invoices,
+            toFloat64(round(sumIf({dec_line_6}, {retail_cond}), 2)) as retail_sales,
+            sumIf({dsr_qty_6}, {retail_cond}) as retail_units,
+            count(DISTINCT if({retail_cond}, s.invoice_no, null)) as retail_invoices,
             count(DISTINCT if({retail_cond}, s.branch, null)) as retail_branches,
-            round(sumIf(toFloat64(s.sold_price) * toInt64(s.qty), NOT ({retail_cond})), 2) as internal_schemes_demo,
-            round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) as total_sales,
-            sum({POS_UNITS_EXPR}) as total_units,
-            count(DISTINCT if(toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', s.invoice_no, null)) as total_invoices{mob_sel_6}
+            toFloat64(round(sumIf({dec_line_6}, NOT ({retail_cond})), 2)) as internal_schemes_demo,
+            toFloat64(round(sum({dec_line_6}), 2)) as total_sales,
+            sum({dsr_qty_6}) as total_units,
+            count(DISTINCT s.invoice_no) as total_invoices{mob_sel_6}
         FROM azure_sales_report s
         LEFT JOIN branch_master bm ON bm.code = s.branch
         LEFT JOIN item_master im ON im.item_code = s.item_code
@@ -2465,9 +2468,9 @@ WHERE {date_filter}"""
             reconcile_note = f" *(Corporate Gross Billed including HQ demo allocations & scheme vouchers: {format_inr(gross_sales)})*"
 
         _wp6 = f"In **{date_label}**" if is_month else (f"From **{date_label}**" if start_date != end_date else f"On **{date_label}**")
-        ans = f"{_wp6}, **Retail Store Net Sales** were **{format_inr(main_sales)}** ({format_inr_exact(main_sales)}) across **{retail_branches} branches** with **{format_units(main_units)} units** sold across **{format_units(main_inv)} customer invoices**.{p_extra}{reconcile_note}"
+        ans = f"{_wp6}, **POS Net Sales** were **{format_inr(main_sales)}** ({format_inr_exact(main_sales)}) across **{retail_branches} POS branches** with **{format_units(main_units)} net units** across **{format_units(main_inv)} invoices**.{p_extra}{reconcile_note}"
         cards = [
-            {"label": "Retail Store Sales", "value": format_inr(main_sales), "color": "#059669"},
+            {"label": "POS Net Sales", "value": format_inr(main_sales), "color": "#059669"},
             {"label": "Units Sold", "value": format_units(main_units), "color": "#2563eb"},
             {"label": "Invoices", "value": format_units(main_inv), "color": "#7c3aed"},
             {"label": "Active Stores", "value": format_units(retail_branches), "color": "#d97706"}

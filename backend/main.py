@@ -1843,7 +1843,7 @@ def api_sync():
 
 @app.route('/api/health', method=['GET'])
 def api_health():
-    return {"status": "ok", "build": "repeat-new-maxquery-fix"}
+    return {"status": "ok", "build": "ask-ai-pos-dsr-fix"}
 
 @app.route('/api/sync/status', method=['GET', 'OPTIONS'])
 def api_sync_status():
