@@ -108,18 +108,22 @@ MIN_SIMILARITY = 0.5             # unverified replacement file must be >= 50% si
 UA = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 
 
-def _has_month_conflict(month_name, expected_year, parent_path, folder_name):
+def _has_month_conflict(allowed_months, allowed_years, parent_path, folder_name):
     """True if the Drive folder path explicitly belongs to a different month or year than the campaign."""
-    if not month_name:
+    if not allowed_months:
         return False
+    if isinstance(allowed_months, str):
+        allowed_months = {allowed_months}
+    if isinstance(allowed_years, int):
+        allowed_years = {allowed_years}
     loc_dirs = f"{parent_path} {folder_name}".lower()
     dir_words = set(re.findall(r'[a-z]+', loc_dirs))
     mentioned_months = dir_words & ALL_MONTHS
-    if mentioned_months and month_name not in mentioned_months:
+    if mentioned_months and not (mentioned_months & set(allowed_months)):
         return True
-    if expected_year:
-        yr_matches = [int(y) for y in re.findall(r'\b(20\d{2})\b', parent_path)]
-        if yr_matches and expected_year not in yr_matches:
+    if allowed_years:
+        yr_matches = {int(y) for y in re.findall(r'\b(20\d{2})\b', parent_path)}
+        if yr_matches and not (yr_matches & set(allowed_years)):
             return True
     return False
 
@@ -135,14 +139,23 @@ def _has_folder_date_conflict(start_date, end_date, folder_name):
     except Exception:
         return False
     fn = folder_name.lower()
-    rng = re.search(r'(\d{1,2})\s*(?:th|st|nd|rd)?\s*[-&]\s*(\d{1,2})', fn)
+    months_re = '|'.join(sorted(list(ALL_MONTHS) + ['jan','feb','mar','apr','jun','jul','aug','sep','sept','oct','nov','dec'], key=len, reverse=True))
+    cross = (
+        re.search(rf'\b(?:{months_re})\s*(\d{{1,2}})\s*(?:th|st|nd|rd)?\s*(?:[-–—&]|\bto\b)\s*(?:{months_re})\s*(\d{{1,2}})\b', fn)
+        or re.search(rf'\b(\d{{1,2}})\s*(?:th|st|nd|rd)?\s*(?:{months_re})\s*(?:[-–—&]|\bto\b)\s*(\d{{1,2}})\s*(?:th|st|nd|rd)?\s*(?:{months_re})\b', fn)
+    )
+    if cross:
+        d1, d2 = int(cross.group(1)), int(cross.group(2))
+        if 1 <= d1 <= 31 and 1 <= d2 <= 31 and (d1, d2) != (s_day, e_day):
+            return True
+        return False
+    rng = re.search(r'(\d{1,2})\s*(?:th|st|nd|rd)?\s*(?:[-–—&]|\bto\b)\s*(\d{1,2})', fn)
     if rng:
         d1, d2 = int(rng.group(1)), int(rng.group(2))
         if 1 <= d1 <= 31 and 1 <= d2 <= 31 and (d1, d2) != (s_day, e_day):
             return True
         return False
-    months_re = '|'.join(ALL_MONTHS)
-    single = re.search(rf'(?:{months_re})\s*(\d{{1,2}})\b', fn) or re.search(rf'\b(\d{{1,2}})\s*(?:th|st|nd|rd)?\s*(?:{months_re})', fn)
+    single = re.search(rf'\b(?:{months_re})\s*(\d{{1,2}})\b', fn) or re.search(rf'\b(\d{{1,2}})\s*(?:th|st|nd|rd)?\s*(?:{months_re})\b', fn)
     if single:
         d1 = int(single.group(1))
         if 1 <= d1 <= 31 and (d1, d1) != (s_day, e_day):
@@ -160,17 +173,21 @@ def match_campaign(camp, normalized_drive, local_candidates):
     end_date = camp.get('end_date') or start_date
     core = _core_store_tokens(camp_name)
 
-    # Determine expected month string (e.g. "SEPTEMBER 2026")
-    expected_month = ""
+    # Determine expected month(s) and year(s) (handles cross-month campaigns like Oct 31 - Nov 2)
+    allowed_months = set()
+    allowed_years = set()
     month_name = ""
-    expected_year = None
-    if start_date:
-        try:
-            d = datetime.strptime(start_date[:10], '%Y-%m-%d')
-            expected_month = f"{d.strftime('%B').upper()} {d.year}"
-            month_name = d.strftime('%B').lower()
-            expected_year = d.year
-        except Exception: pass
+    for dt_s in (start_date, end_date):
+        if dt_s:
+            try:
+                d = datetime.strptime(dt_s[:10], '%Y-%m-%d')
+                m_low = d.strftime('%B').lower()
+                if not month_name:
+                    month_name = m_low
+                allowed_months.add(m_low)
+                allowed_years.add(d.year)
+            except Exception:
+                pass
 
     # Match Drive files
     matched_file = None; best_score = 0.0
@@ -191,7 +208,7 @@ def match_campaign(camp, normalized_drive, local_candidates):
         folder_name = str(fi.get('folder') or '').lower()
 
         # Never match across different month folders or conflicting date-range subfolders
-        if _has_month_conflict(month_name, expected_year, parent_path, folder_name):
+        if _has_month_conflict(allowed_months, allowed_years, parent_path, folder_name):
             continue
         if _has_folder_date_conflict(start_date, end_date, folder_name):
             continue
@@ -201,7 +218,7 @@ def match_campaign(camp, normalized_drive, local_candidates):
 
         # Month and campaign_group folder bonuses separate Sept vs Oct runs for the same store
         ctx_bonus = 0.0
-        if month_name and month_name in full_loc:
+        if any(m in full_loc for m in allowed_months):
             ctx_bonus += 0.10
         if clean_cg and clean_cg in norm_loc:
             ctx_bonus += 0.20

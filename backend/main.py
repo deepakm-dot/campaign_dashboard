@@ -163,10 +163,11 @@ def parse_campaign_group_dates(campaign_group, sheet_date_str, sheet_tab=''):
     """
     Extract start_date and end_date from Campaign Group name.
     Examples:
-      'Vinu Special support august 6-9'   → ('2026-08-06', '2026-08-09')
-      'FALNIR FREEDOM SALE 13 - 16 AUGUST'→ ('2026-08-13', '2026-08-16')
-      'Aluva Inuaguration 8th august'      → ('2026-08-08', '2026-08-08')
-      '200 LOYALTY POIN CAMPAIGN'          → falls back to sheet date
+      'Vinu Special support august 6-9'                    -> ('2026-08-06', '2026-08-09')
+      'FALNIR FREEDOM SALE 13 - 16 AUGUST'                 -> ('2026-08-13', '2026-08-16')
+      'ALL KERALA ANNIVERSARY OFFER October 31-November 2' -> ('2026-10-31', '2026-11-02')
+      'Aluva Inuaguration 8th august'                      -> ('2026-08-08', '2026-08-08')
+      '200 LOYALTY POIN CAMPAIGN'                          -> falls back to sheet date
     """
     import re
     from datetime import datetime
@@ -174,21 +175,25 @@ def parse_campaign_group_dates(campaign_group, sheet_date_str, sheet_tab=''):
     MONTH_MAP = {
         'january':1,'february':2,'march':3,'april':4,'may':5,'june':6,
         'july':7,'august':8,'september':9,'october':10,'november':11,'december':12,
-        'jan':1,'feb':2,'mar':3,'apr':4,'jun':6,'jul':7,'aug':8,
+        'sept':9,'jan':1,'feb':2,'mar':3,'apr':4,'jun':6,'jul':7,'aug':8,
         'sep':9,'oct':10,'nov':11,'dec':12
     }
+    MONTH_NAMES_RE = '|'.join(sorted(MONTH_MAP.keys(), key=len, reverse=True))
 
     # Get year and fallback month from the IST Sheets date column or _sheet_tab (e.g. 'November 2026')
     year, month = None, None
+    tab_month = None
     tab_low = str(sheet_tab or '').lower()
     tab_yr = re.search(r'\b(20\d{2})\b', tab_low)
     if tab_yr:
         year = int(tab_yr.group(1))
-    for name, num in MONTH_MAP.items():
+    for name, num in sorted(MONTH_MAP.items(), key=lambda kv: -len(kv[0])):
         if re.search(rf'\b{name}\b', tab_low):
             month = num
+            tab_month = num
             break
 
+    base = None
     try:
         base = datetime.strptime(sheet_date_str[:10], '%Y-%m-%d')
         if year is None:
@@ -199,32 +204,70 @@ def parse_campaign_group_dates(campaign_group, sheet_date_str, sheet_tab=''):
         if year is None or month is None:
             return sheet_date_str[:10], sheet_date_str[:10]
 
-    text = campaign_group.lower()
+    text = str(campaign_group or '').lower()
 
-    # Override month/year if explicitly stated in group name
+    # Override year if explicitly stated in group name
     grp_yr = re.search(r'\b(20\d{2})\b', text)
     if grp_yr:
         year = int(grp_yr.group(1))
-    for name, num in MONTH_MAP.items():
-        if name in text:
+
+    # Pattern 0: Cross-month range, e.g. "October 31-November 2", "Oct 31 to Nov 2", "31 October - 2 November"
+    cross_m1 = re.search(
+        rf'\b({MONTH_NAMES_RE})\s*(\d{{1,2}})\s*(?:th|st|nd|rd)?\s*(?:[-–—&]|\bto\b)\s*({MONTH_NAMES_RE})\s*(\d{{1,2}})\b',
+        text
+    )
+    cross_m2 = None if cross_m1 else re.search(
+        rf'\b(\d{{1,2}})\s*(?:th|st|nd|rd)?\s*({MONTH_NAMES_RE})\s*(?:[-–—&]|\bto\b)\s*(\d{{1,2}})\s*(?:th|st|nd|rd)?\s*({MONTH_NAMES_RE})\b',
+        text
+    )
+    if cross_m1 or cross_m2:
+        if cross_m1:
+            m1, d1 = MONTH_MAP[cross_m1.group(1)], int(cross_m1.group(2))
+            m2, d2 = MONTH_MAP[cross_m1.group(3)], int(cross_m1.group(4))
+        else:
+            d1, m1 = int(cross_m2.group(1)), MONTH_MAP[cross_m2.group(2)]
+            d2, m2 = int(cross_m2.group(3)), MONTH_MAP[cross_m2.group(4)]
+        if m2 < m1:
+            if base and base.month == m1:
+                y1, y2 = base.year, base.year + 1
+            elif tab_month == m2:
+                y1, y2 = year - 1, year
+            else:
+                y1, y2 = year, year + 1
+        else:
+            y1 = y2 = year
+        try:
+            start = datetime(y1, m1, d1).strftime('%Y-%m-%d')
+            end   = datetime(y2, m2, d2).strftime('%Y-%m-%d')
+            return start, end
+        except Exception:
+            pass
+
+    # Override single month if explicitly stated in group name (supports 'October1-10' without space too)
+    for name, num in sorted(MONTH_MAP.items(), key=lambda kv: -len(kv[0])):
+        if re.search(rf'\b{name}(?:\b|(?=\d))', text):
             month = num
             break
 
-    # Pattern 1: "6-9", "13 - 16", "13th & 16", "13TH - 16"
-    range_match = re.search(r'(\d{1,2})\s*(?:th|st|nd|rd)?\s*[-&]\s*(\d{1,2})', text)
+    # Pattern 1: "6-9", "13 - 16", "13th & 16", "13TH - 16", "October 30 - 2"
+    range_match = re.search(r'(\d{1,2})\s*(?:th|st|nd|rd)?\s*(?:[-–—&]|\bto\b)\s*(\d{1,2})', text)
     if range_match:
         d1, d2 = int(range_match.group(1)), int(range_match.group(2))
         try:
             start = datetime(year, month, d1).strftime('%Y-%m-%d')
-            end   = datetime(year, month, d2).strftime('%Y-%m-%d')
+            if d2 < d1:
+                m2 = 1 if month == 12 else (month + 1)
+                y2 = (year + 1) if month == 12 else year
+                end = datetime(y2, m2, d2).strftime('%Y-%m-%d')
+            else:
+                end = datetime(year, month, d2).strftime('%Y-%m-%d')
             return start, end
         except Exception:
             pass
 
     # Pattern 2: single day with or without suffix, e.g. "september 26", "26 september", "8th august", "20th august"
-    month_names_re = '|'.join(MONTH_MAP.keys())
-    single_match = re.search(rf'(?:{month_names_re})\s+(\d{{1,2}})\b', text) or \
-                   re.search(rf'\b(\d{{1,2}})\s*(?:th|st|nd|rd)?\s+(?:{month_names_re})', text) or \
+    single_match = re.search(rf'\b(?:{MONTH_NAMES_RE})\s*(\d{{1,2}})\b', text) or \
+                   re.search(rf'\b(\d{{1,2}})\s*(?:th|st|nd|rd)?\s*(?:{MONTH_NAMES_RE})\b', text) or \
                    re.search(r'\b(\d{1,2})\s*(?:th|st|nd|rd)\b', text)
     if single_match:
         day = int(single_match.group(1))
@@ -1787,7 +1830,7 @@ def api_sync():
 
 @app.route('/api/health', method=['GET'])
 def api_health():
-    return {"status": "ok", "build": "jas-quarter-fix-v2"}
+    return {"status": "ok", "build": "cross-month-dates-fix"}
 
 @app.route('/api/sync/status', method=['GET', 'OPTIONS'])
 def api_sync_status():
