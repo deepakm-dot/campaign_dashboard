@@ -275,8 +275,8 @@ for camp in camps:
     branch_cond = f"branch = '{branch}'"
     if "mavoor road" in camp_name.lower():
         branch_cond = "branch IN ('KIN', 'LAN', 'MAH', 'PCT', 'PUT', 'SBM', 'CAM')"
-    branch_filter = f"AND {branch_cond}" if branch or "mavoor road" in camp_name.lower() else ""
-    seg_branch_cond = branch_cond if (branch or "mavoor road" in camp_name.lower()) else ""
+    branch_filter = f"AND {branch_cond}" if branch or "mavoor road" in camp_name.lower() else "AND branch NOT IN ('SMC', '3GH')"
+    seg_branch_cond = branch_cond if (branch or "mavoor road" in camp_name.lower()) else "branch NOT IN ('SMC', '3GH')"
     
     last_kpi_ts = float(kpi_refreshed.get(f"{KPI_TS_PREFIX}{camp_id}", 0) or 0)
     if not branch_just_resolved and p_cnt == 0 and last_kpi_ts > 0 and (time.time() - last_kpi_ts) < LIVE_REFRESH_MINUTES * 60:

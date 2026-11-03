@@ -1012,9 +1012,9 @@ def get_campaign_store_sales(campaign_id):
         if branch == '':
             if _is_chainwide_campaign(camp.get('campaign_name',''), camp.get('campaign_group','')):
                 display_name = 'All Stores (Kerala)'
-                branch_cond_s = "1=1"
-                branch_cond = "1=1"
-                branch_cond_full = "1=1"
+                branch_cond_s = "s.branch NOT IN ('SMC', '3GH')"
+                branch_cond = "branch NOT IN ('SMC', '3GH')"
+                branch_cond_full = "azure_sales_report.branch NOT IN ('SMC', '3GH')"
             else:
                 display_name = f"{camp.get('campaign_name','Store')} (POS Branch Pending)"
                 branch_cond_s = "1=0"
@@ -1060,6 +1060,8 @@ def get_campaign_store_sales(campaign_id):
         )"""
         is_od_expr = f"(({eff_prod}) = 'AC OUTDOOR' OR lower(coalesce(im.item_category, '')) = 'ac outdoor' OR lower(coalesce(im.item_name, '')) LIKE 'o/d%')"
         pos_units_expr = f"if({is_od_expr}, 0, if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), if(toFloat64(s.sold_price) < 0, 0, toInt64(s.qty))))"
+        dsr_qty_expr   = "if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), if(coalesce(im.product, '') = 'SERVICE', 0, toInt64(s.qty)))"
+        dec_line_expr  = "toDecimal64(toString(s.sold_price), 4) * toInt64(s.qty)"
         sql = f"""
             SELECT
                 multiIf(
@@ -1073,9 +1075,11 @@ def get_campaign_store_sales(campaign_id):
                 ) AS product_type,
                 SUM(if(NOT {is_od_expr} AND toFloat64(s.sold_price) > 0 AND s.invoice_no NOT LIKE '%-SR-%', toInt64(s.qty), 0)) AS paid_qty,
                 SUM({pos_units_expr})                                  AS net_qty,
-                SUM(toFloat64(s.sold_price) * toInt64(s.qty))          AS revenue,
-                SUM(if(toFloat64(s.sold_price) >= 0 AND s.invoice_no NOT LIKE '%-SR-%', toFloat64(s.sold_price) * toInt64(s.qty), 0)) AS gross_rev,
-                SUM(if(toFloat64(s.sold_price) < 0 OR s.invoice_no LIKE '%-SR-%', toFloat64(s.sold_price) * toInt64(s.qty), 0)) AS deductions
+                SUM({dsr_qty_expr})                                    AS dsr_qty,
+                toFloat64(round(SUM({dec_line_expr}), 2))              AS revenue,
+                toFloat64(round(SUM(if(toFloat64(s.sold_price) >= 0 AND s.invoice_no NOT LIKE '%-SR-%', {dec_line_expr}, toDecimal64(0, 4))), 2)) AS gross_rev,
+                toFloat64(round(SUM(if(s.invoice_no LIKE '%-SR-%', {dec_line_expr}, toDecimal64(0, 4))), 2)) AS returns_rev,
+                toFloat64(round(SUM(if(toFloat64(s.sold_price) < 0 AND s.invoice_no NOT LIKE '%-SR-%', {dec_line_expr}, toDecimal64(0, 4))), 2)) AS exchanges_rev
             FROM azure_sales_report s
             LEFT JOIN item_master im ON im.item_code = s.item_code
             WHERE toDate(s.date) >= '{start_date}'
@@ -1089,16 +1093,18 @@ def get_campaign_store_sales(campaign_id):
         """
         data = query_clickhouse(sql)
         PRODUCT_ORDER = ['TV', 'Washing machine', 'Referigerator', 'Mobile', 'Laptop', 'AC', 'Other']
-        bucket = {p: {'paid_qty': 0, 'net_qty': 0, 'revenue': 0.0, 'gross': 0.0, 'deductions': 0.0} for p in PRODUCT_ORDER}
+        bucket = {p: {'paid_qty': 0, 'net_qty': 0, 'dsr_qty': 0, 'revenue': 0.0, 'gross': 0.0, 'returns': 0.0, 'exchanges': 0.0} for p in PRODUCT_ORDER}
         for r in data:
             pt = r.get('product_type', 'Other')
             if pt not in bucket:
                 pt = 'Other'
-            bucket[pt]['paid_qty']   += int(r.get('paid_qty', 0) or 0)
-            bucket[pt]['net_qty']    += int(r.get('net_qty', 0) or 0)
-            bucket[pt]['revenue']    += float(r.get('revenue', 0) or 0)
-            bucket[pt]['gross']      += float(r.get('gross_rev', 0) or 0)
-            bucket[pt]['deductions'] += float(r.get('deductions', 0) or 0)
+            bucket[pt]['paid_qty']  += int(r.get('paid_qty', 0) or 0)
+            bucket[pt]['net_qty']   += int(r.get('net_qty', 0) or 0)
+            bucket[pt]['dsr_qty']   += int(r.get('dsr_qty', 0) or 0)
+            bucket[pt]['revenue']   += float(r.get('revenue', 0) or 0)
+            bucket[pt]['gross']     += float(r.get('gross_rev', 0) or 0)
+            bucket[pt]['returns']   += float(r.get('returns_rev', 0) or 0)
+            bucket[pt]['exchanges'] += float(r.get('exchanges_rev', 0) or 0)
 
         # For merchandise categories (TV, Laptop, etc.) use total units matching the Combined Sales Report
         # Reconcile total quantity and net sales to match MyG POS Daily Sales Report (futurepos.mygoal.biz):
@@ -1129,11 +1135,11 @@ def get_campaign_store_sales(campaign_id):
             pos_returns   = -4785654.33
             pos_exchanges = -6047570.00
         else:
-            pos_total_qty = sum(bucket[p]['net_qty'] for p in PRODUCT_ORDER)
+            pos_total_qty = sum(bucket[p]['dsr_qty'] for p in PRODUCT_ORDER)
             pos_net_sales = round(sum(bucket[p]['revenue'] for p in PRODUCT_ORDER), 2)
             pos_gross     = round(sum(bucket[p]['gross'] for p in PRODUCT_ORDER), 2)
-            pos_returns   = 0.0
-            pos_exchanges = round(sum(bucket[p]['deductions'] for p in PRODUCT_ORDER), 2)
+            pos_returns   = round(sum(bucket[p]['returns'] for p in PRODUCT_ORDER), 2)
+            pos_exchanges = round(sum(bucket[p]['exchanges'] for p in PRODUCT_ORDER), 2)
 
         # Category quantity reconciliation:
         # TV, WM, Ref, Mobile, Laptop, AC retain verified merchandise sales
@@ -1259,7 +1265,7 @@ def get_brand_breakdown(campaign_id):
     norm_product = product.upper()
 
     if branch == '':
-        branch_cond_s = "1=1" if _is_chainwide_campaign(camp.get('campaign_name',''), camp.get('campaign_group','')) else "1=0"
+        branch_cond_s = "s.branch NOT IN ('SMC', '3GH')" if _is_chainwide_campaign(camp.get('campaign_name',''), camp.get('campaign_group','')) else "1=0"
     else:
         branch_cond_s = f"s.branch = '{branch}'"
         if "mavoor road" in camp.get('campaign_name', '').lower():
@@ -1404,7 +1410,7 @@ def get_campaign_incremental_lift(campaign_id):
     base_end_str   = base_end.strftime('%Y-%m-%d')
 
     if branch == '':
-        branch_cond_s = "1=1" if _is_chainwide_campaign(camp.get('campaign_name',''), camp.get('campaign_group','')) else "1=0"
+        branch_cond_s = "s.branch NOT IN ('SMC', '3GH')" if _is_chainwide_campaign(camp.get('campaign_name',''), camp.get('campaign_group','')) else "1=0"
     else:
         branch_cond_s = f"s.branch = '{branch}'"
         if "mavoor road" in (camp.get('campaign_name') or '').lower():
@@ -1416,8 +1422,8 @@ def get_campaign_incremental_lift(campaign_id):
             toDate(s.date) AS day_date,
             toDayOfWeek(toDate(s.date)) AS dow,
             count(*) AS bills,
-            SUM(if({is_od_lift}, 0, if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), if(toFloat64(s.sold_price) < 0, 0, toInt64(s.qty))))) AS units,
-            round(SUM(toFloat64(s.sold_price) * toInt64(s.qty)), 2) AS revenue
+            SUM(if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), if(coalesce(im.product, '') = 'SERVICE', 0, toInt64(s.qty)))) AS units,
+            toFloat64(round(SUM(toDecimal64(toString(s.sold_price), 4) * toInt64(s.qty)), 2)) AS revenue
         FROM azure_sales_report s
         LEFT JOIN item_master im ON s.item_code = im.item_code
         WHERE {branch_cond_s}
@@ -1830,7 +1836,7 @@ def api_sync():
 
 @app.route('/api/health', method=['GET'])
 def api_health():
-    return {"status": "ok", "build": "cross-month-dates-fix"}
+    return {"status": "ok", "build": "pos-dsr-smc-3gh-fix"}
 
 @app.route('/api/sync/status', method=['GET', 'OPTIONS'])
 def api_sync_status():
