@@ -1284,39 +1284,42 @@
 
       <!-- FILTER BAR: RBM, BDM, STORE, DATE WINDOW + APPLY FILTER -->
       <div class="card" style="margin-bottom:20px;padding:16px 20px;">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(138px,1fr));gap:12px;align-items:end;">
-          <div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
+          <div style="flex:1 1 115px;min-width:115px;">
             <label style="display:block;font-size:10.5px;font-weight:600;letter-spacing:0.05em;color:#64748b;text-transform:uppercase;margin-bottom:6px;">RBM Filter</label>
-            <select id="ce-filter-rbm" class="search-box" style="width:100%;padding:8px 10px;font-size:12.5px;font-weight:500;color:#1e293b;cursor:pointer;" onchange="onCeRbmChange()">
+            <select id="ce-filter-rbm" class="search-box" style="width:100%;max-width:none;padding:8px 10px;font-size:12.5px;font-weight:500;color:#1e293b;cursor:pointer;" onchange="onCeRbmChange()">
               <option value="all">All RBMs</option>
             </select>
           </div>
-          <div>
+          <div style="flex:1 1 115px;min-width:115px;">
             <label style="display:block;font-size:10.5px;font-weight:600;letter-spacing:0.05em;color:#64748b;text-transform:uppercase;margin-bottom:6px;">BDM Filter</label>
-            <select id="ce-filter-bdm" class="search-box" style="width:100%;padding:8px 10px;font-size:12.5px;font-weight:500;color:#1e293b;cursor:pointer;" onchange="onCeBdmChange()">
+            <select id="ce-filter-bdm" class="search-box" style="width:100%;max-width:none;padding:8px 10px;font-size:12.5px;font-weight:500;color:#1e293b;cursor:pointer;" onchange="onCeBdmChange()">
               <option value="all">All BDMs</option>
             </select>
           </div>
-          <div>
+          <div style="flex:1.15 1 130px;min-width:125px;">
             <label style="display:block;font-size:10.5px;font-weight:600;letter-spacing:0.05em;color:#64748b;text-transform:uppercase;margin-bottom:6px;">Store Filter</label>
-            <select id="ce-filter-store" class="search-box" style="width:100%;padding:8px 10px;font-size:12.5px;font-weight:500;color:#1e293b;cursor:pointer;">
+            <select id="ce-filter-store" class="search-box" style="width:100%;max-width:none;padding:8px 10px;font-size:12.5px;font-weight:500;color:#1e293b;cursor:pointer;">
               <option value="all">All Stores</option>
             </select>
           </div>
-          <div>
+          <div style="flex:0.95 1 128px;min-width:125px;">
             <label style="display:block;font-size:10.5px;font-weight:600;letter-spacing:0.05em;color:#64748b;text-transform:uppercase;margin-bottom:6px;">Conversion From Date</label>
-            <input type="date" id="ce-filter-start" class="search-box" value="2026-11-01" style="width:100%;padding:7px 10px;font-size:12.5px;font-weight:500;color:#1e293b;" />
+            <input type="date" id="ce-filter-start" class="search-box" value="2026-11-01" style="width:100%;max-width:none;padding:7px 10px;font-size:12.5px;font-weight:500;color:#1e293b;" />
           </div>
-          <div>
+          <div style="flex:0.95 1 128px;min-width:125px;">
             <label style="display:block;font-size:10.5px;font-weight:600;letter-spacing:0.05em;color:#64748b;text-transform:uppercase;margin-bottom:6px;">To Date (Optional)</label>
-            <input type="date" id="ce-filter-end" class="search-box" style="width:100%;padding:7px 10px;font-size:12.5px;font-weight:500;color:#1e293b;" />
+            <input type="date" id="ce-filter-end" class="search-box" style="width:100%;max-width:none;padding:7px 10px;font-size:12.5px;font-weight:500;color:#1e293b;" />
           </div>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <button class="btn-refresh" onclick="loadCeCrossSell()" style="flex:1;background:#4f46e5;color:#ffffff;border-color:#4f46e5;padding:8px 14px;font-size:12.5px;font-weight:600;border-radius:8px;white-space:nowrap;justify-content:center;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+          <div style="flex:0 0 auto;display:flex;gap:8px;align-items:center;">
+            <button class="btn-refresh" onclick="loadCeCrossSell()" style="background:#4f46e5;color:#ffffff;border:1px solid #4f46e5;padding:8px 14px;font-size:12.5px;font-weight:600;border-radius:8px;white-space:nowrap;justify-content:center;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
               Apply Filter
             </button>
-            <button class="btn-refresh" onclick="resetCeFilters()" title="Reset all filters" style="padding:8px 12px;font-size:12.5px;font-weight:500;border-radius:8px;color:#475569;white-space:nowrap;cursor:pointer;">Reset</button>
+            <button class="btn-refresh" onclick="resetCeFilters()" title="Reset all filters" style="background:#f8fafc;color:#334155;border:1px solid #cbd5e1;padding:8px 13px;font-size:12.5px;font-weight:600;border-radius:8px;white-space:nowrap;display:inline-flex;align-items:center;gap:5px;cursor:pointer;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+              Reset
+            </button>
           </div>
         </div>
       </div>
