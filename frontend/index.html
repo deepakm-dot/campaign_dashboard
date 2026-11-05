@@ -1265,9 +1265,7 @@
         <div>
           <div class="page-title" style="display:flex;align-items:center;gap:10px;">
             <span>📺 CE Cross-Sell Cohort Tracker</span>
-            <span style="font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2ff;color:#4f46e5;border:1px solid #c7d2fe;">5,44,635 Excel Cohort &bull; All 25 CE Products</span>
           </div>
-          <div class="page-sub" id="ce-meta-sub">Mobile / Laptop / Both Buyers (01 Nov 2025 &ndash; 31 Oct 2026) with 0 prior Consumer Electronics purchases &bull; Daily ClickHouse Conversion Tracking</div>
         </div>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
           <button class="btn-refresh" onclick="exportCeCrossSellExcel()" style="background:#059669;color:#ffffff;border-color:#059669;display:inline-flex;align-items:center;gap:6px;">
@@ -1342,8 +1340,6 @@
           <div class="kpi-icon">&#x1F4E6;</div>
           <div class="kpi-label">CE Units Sold</div>
           <div class="kpi-value" id="ce-kv-units" style="color:#d97706;">0</div>
-          <div class="kpi-sub" id="ce-kv-units-sub">0 CE Invoices &bull; All 25 CE Products</div>
-          <div id="ce-kv-pos-sync" style="margin-top:8px;font-size:11px;font-weight:600;color:#475569;background:#f1f5f9;padding:4px 8px;border-radius:6px;display:inline-block;">Latest POS Sync: &mdash;</div>
         </div>
       </div>
 
@@ -3698,9 +3694,6 @@ async function loadCeCrossSell(forceReload = false) {
     document.getElementById('ce-kv-rev-sub').innerHTML = `Exact: <strong>${inrExact(rev)}</strong> &bull; Avg/Buyer: ${inrExact(avgRev)}`;
 
     document.getElementById('ce-kv-units').textContent = units.toLocaleString('en-IN');
-    document.getElementById('ce-kv-units-sub').innerHTML = `<strong>${invs.toLocaleString('en-IN')}</strong> CE Bills &bull; All 25 CE Products`;
-    const latestPos = data.meta?.latest_pos_date || '—';
-    document.getElementById('ce-kv-pos-sync').innerHTML = `Latest ClickHouse POS Date: <strong>${latestPos}</strong>`;
 
     // Update tab button labels with counts
     document.getElementById('ce-tab-rbm').textContent = `RBM Wise (${(data.rbm_breakdown || []).length})`;
