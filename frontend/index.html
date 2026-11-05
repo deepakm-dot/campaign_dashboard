@@ -1037,6 +1037,11 @@
         Ask AI
         <span class="ai-sparkle-pill">✨ AI</span>
       </a>
+      <a class="nav-item" onclick="nav('ce',this)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3l-4 4-4-4"/><path d="M6 15h4M14 15h4"/></svg>
+        CE Cross-Sell
+        <span style="margin-left:auto;font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px;background:#ecfdf5;color:#059669;border:1px solid #a7f3d0;">5.45L</span>
+      </a>
     </div>
     <div class="sidebar-footer">
       <div class="sync-badge">
@@ -1254,6 +1259,142 @@
       </div>
     </div>
 
+    <!-- CE CROSS-SELL COHORT PAGE -->
+    <div class="content" id="pg-ce" style="display:none;">
+      <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:14px;">
+        <div>
+          <div class="page-title" style="display:flex;align-items:center;gap:10px;">
+            <span>📺 CE Cross-Sell Cohort Tracker</span>
+            <span style="font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2ff;color:#4f46e5;border:1px solid #c7d2fe;">5,44,635 Excel Cohort &bull; All 25 CE Products</span>
+          </div>
+          <div class="page-sub" id="ce-meta-sub">Mobile / Laptop / Both Buyers (01 Nov 2025 &ndash; 31 Oct 2026) with 0 prior Consumer Electronics purchases &bull; Daily ClickHouse Conversion Tracking</div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <button class="btn-refresh" onclick="exportCeCrossSellExcel()" style="background:#059669;color:#ffffff;border-color:#059669;display:inline-flex;align-items:center;gap:6px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export Excel Report
+          </button>
+          <button class="btn-refresh" onclick="loadCeCrossSell(true)" style="display:inline-flex;align-items:center;gap:6px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+            Refresh CE Tracker
+          </button>
+        </div>
+      </div>
+
+      <!-- FILTER BAR: RBM, BDM, STORE, SEGMENT, 25 CE PRODUCTS, DATE WINDOW -->
+      <div class="card" style="margin-bottom:20px;padding:16px 20px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px;align-items:end;">
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">RBM Filter</label>
+            <select id="ce-filter-rbm" class="search-box" style="width:100%;padding:8px 10px;font-weight:600;cursor:pointer;" onchange="onCeRbmChange()">
+              <option value="all">All RBMs</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">BDM Filter</label>
+            <select id="ce-filter-bdm" class="search-box" style="width:100%;padding:8px 10px;font-weight:600;cursor:pointer;" onchange="onCeBdmChange()">
+              <option value="all">All BDMs</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">Store Filter</label>
+            <select id="ce-filter-store" class="search-box" style="width:100%;padding:8px 10px;font-weight:600;cursor:pointer;" onchange="loadCeCrossSell()">
+              <option value="all">All Stores</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">Cohort Segment</label>
+            <select id="ce-filter-segment" class="search-box" style="width:100%;padding:8px 10px;font-weight:600;cursor:pointer;" onchange="loadCeCrossSell()">
+              <option value="all">All Segments</option>
+              <option value="Mobile Only">Mobile Only</option>
+              <option value="Laptop Only">Laptop Only</option>
+              <option value="Both Mobile & Laptop">Both Mobile &amp; Laptop</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">CE Product (25 Items)</label>
+            <select id="ce-filter-product" class="search-box" style="width:100%;padding:8px 10px;font-weight:600;cursor:pointer;" onchange="loadCeCrossSell()">
+              <option value="all">All 25 CE Products</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">Conversion From Date</label>
+            <input type="date" id="ce-filter-start" class="search-box" value="2026-11-01" style="width:100%;padding:7px 10px;font-weight:600;" onchange="loadCeCrossSell()" />
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">To Date (Optional)</label>
+            <div style="display:flex;gap:6px;">
+              <input type="date" id="ce-filter-end" class="search-box" style="width:100%;padding:7px 10px;font-weight:600;" onchange="loadCeCrossSell()" />
+              <button class="btn-refresh" onclick="resetCeFilters()" title="Reset all filters" style="padding:7px 10px;font-size:12px;white-space:nowrap;">Reset</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPI CARDS -->
+      <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr));margin-bottom:20px;">
+        <div class="kpi-card c1">
+          <div class="kpi-icon">&#x1F465;</div>
+          <div class="kpi-label">Target Cohort Customers</div>
+          <div class="kpi-value" id="ce-kv-cohort">5,44,634</div>
+          <div class="kpi-sub" id="ce-kv-cohort-sub">Excel File: 5,44,635 rows (incl. header)</div>
+          <div id="ce-kv-seg-pills" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;font-size:11px;font-weight:600;"></div>
+        </div>
+        <div class="kpi-card c2">
+          <div class="kpi-icon">&#x2705;</div>
+          <div class="kpi-label">Converted CE Buyers</div>
+          <div class="kpi-value" id="ce-kv-conv">0</div>
+          <div class="kpi-sub" id="ce-kv-conv-sub">Conversion Rate: 0.000%</div>
+          <div id="ce-kv-untapped" style="margin-top:8px;font-size:11.5px;font-weight:700;color:#059669;background:#ecfdf5;padding:5px 9px;border-radius:6px;display:inline-block;">Untapped Base: 5,44,634</div>
+        </div>
+        <div class="kpi-card c3">
+          <div class="kpi-icon">&#x1F4B0;</div>
+          <div class="kpi-label">Revenue Generated (CE)</div>
+          <div class="kpi-value" id="ce-kv-rev">&#x20B9;0</div>
+          <div class="kpi-sub" id="ce-kv-rev-sub">Exact: &#x20B9;0 &bull; Avg/Buyer: &#x20B9;0</div>
+        </div>
+        <div class="kpi-card c1" style="border-top:4px solid #f59e0b;">
+          <div class="kpi-icon">&#x1F4E6;</div>
+          <div class="kpi-label">CE Units Sold</div>
+          <div class="kpi-value" id="ce-kv-units" style="color:#d97706;">0</div>
+          <div class="kpi-sub" id="ce-kv-units-sub">0 CE Invoices &bull; All 25 CE Products</div>
+          <div id="ce-kv-pos-sync" style="margin-top:8px;font-size:11px;font-weight:600;color:#475569;background:#f1f5f9;padding:4px 8px;border-radius:6px;display:inline-block;">Latest POS Sync: &mdash;</div>
+        </div>
+      </div>
+
+      <!-- SUB-NAVIGATION FOR BREAKDOWN TABLES -->
+      <div class="card">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;padding:16px 22px;flex-wrap:wrap;gap:12px;border-bottom:1px solid var(--border);">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button id="ce-tab-rbm" class="btn-refresh" onclick="switchCeSubTab('rbm')" style="background:#4f46e5;color:#fff;border-color:#4f46e5;font-weight:700;">RBM Wise</button>
+            <button id="ce-tab-bdm" class="btn-refresh" onclick="switchCeSubTab('bdm')" style="font-weight:600;">BDM Wise</button>
+            <button id="ce-tab-store" class="btn-refresh" onclick="switchCeSubTab('store')" style="font-weight:600;">Store Wise</button>
+            <button id="ce-tab-products" class="btn-refresh" onclick="switchCeSubTab('products')" style="font-weight:600;">All 25 CE Products</button>
+            <button id="ce-tab-daily" class="btn-refresh" onclick="switchCeSubTab('daily')" style="font-weight:600;">Daily Conversions</button>
+            <button id="ce-tab-bills" class="btn-refresh" onclick="switchCeSubTab('bills')" style="font-weight:600;">Converted Customer Bills</button>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <select id="ce-sort-by" class="search-box" style="padding:7px 12px;width:auto;font-weight:600;cursor:pointer;" onchange="renderActiveCeSubTab()">
+              <option value="revenue">Sort by: Revenue Generated</option>
+              <option value="units">Sort by: Units Sold</option>
+              <option value="buyers">Sort by: Converted Buyers</option>
+              <option value="conv_rate">Sort by: Conversion %</option>
+              <option value="cohort">Sort by: Cohort Customers</option>
+            </select>
+            <input type="text" id="ce-table-search" class="search-box" placeholder="Search RBM, BDM, Store, Product, or Mobile…" style="padding:7px 12px;width:240px;" oninput="renderActiveCeSubTab()" />
+          </div>
+        </div>
+        <div class="table-wrap" style="max-height:580px;overflow-y:auto;">
+          <table>
+            <thead id="ce-table-head"></thead>
+            <tbody id="ce-table-body">
+              <tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted);">Loading CE Cross-Sell data&hellip;</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
   </main>
 </div>
 
@@ -1285,13 +1426,16 @@ setInterval(tick,1000); tick();
 
 /* ---- NAV ---- */
 function nav(page, el){
-  ['overview','campaigns','ai'].forEach(p => {
+  ['overview','campaigns','ai','ce'].forEach(p => {
     const pageEl = document.getElementById('pg-'+p);
     if(pageEl) pageEl.style.display = p===page?'':'none';
   });
   document.querySelectorAll('.nav-item').forEach(x => x.classList.remove('active'));
   if(el) el.classList.add('active');
-  const titles = {overview:'Executive Overview',campaigns:'Campaign Groups',ai:'AI Assistant · ClickHouse Intelligence'};
+  const titles = {overview:'Executive Overview',campaigns:'Campaign Groups',ai:'AI Assistant · ClickHouse Intelligence',ce:'CE Cross-Sell Cohort Tracker'};
+  if(page==='ce') {
+    loadCeCrossSell();
+  }
   document.getElementById('crumb').textContent = titles[page]||page;
   if(page==='ai') {
     setTimeout(()=>{
@@ -3446,5 +3590,371 @@ async function submitAiChat() {
   </div>
 </div>
 
+<script>
+/* ---- CE CROSS-SELL COHORT TRACKER ---- */
+let _ceData = null;
+let _ceActiveSubTab = 'rbm';
+
+function _ceQueryParams() {
+  const rbm = document.getElementById('ce-filter-rbm')?.value || 'all';
+  const bdm = document.getElementById('ce-filter-bdm')?.value || 'all';
+  const store = document.getElementById('ce-filter-store')?.value || 'all';
+  const segment = document.getElementById('ce-filter-segment')?.value || 'all';
+  const ce_product = document.getElementById('ce-filter-product')?.value || 'all';
+  const start_date = document.getElementById('ce-filter-start')?.value || '2026-11-01';
+  const end_date = document.getElementById('ce-filter-end')?.value || '';
+  return new URLSearchParams({ rbm, bdm, store, segment, ce_product, start_date, end_date });
+}
+
+function onCeRbmChange() {
+  const bdmEl = document.getElementById('ce-filter-bdm');
+  const stEl = document.getElementById('ce-filter-store');
+  if (bdmEl) bdmEl.value = 'all';
+  if (stEl) stEl.value = 'all';
+  loadCeCrossSell();
+}
+
+function onCeBdmChange() {
+  const stEl = document.getElementById('ce-filter-store');
+  if (stEl) stEl.value = 'all';
+  loadCeCrossSell();
+}
+
+function resetCeFilters() {
+  ['ce-filter-rbm', 'ce-filter-bdm', 'ce-filter-store', 'ce-filter-segment', 'ce-filter-product'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = 'all';
+  });
+  const sEl = document.getElementById('ce-filter-start');
+  const eEl = document.getElementById('ce-filter-end');
+  const qEl = document.getElementById('ce-table-search');
+  if (sEl) sEl.value = '2026-11-01';
+  if (eEl) eEl.value = '';
+  if (qEl) qEl.value = '';
+  loadCeCrossSell();
+}
+
+function exportCeCrossSellExcel() {
+  const qs = _ceQueryParams().toString();
+  window.location.href = '/api/ce-cross-sell/export?' + qs;
+}
+
+function _populateCeSelect(id, items, defaultLabel, selectedVal) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  let html = `<option value="all">${defaultLabel}</option>`;
+  (items || []).forEach(v => {
+    const safe = String(v).replace(/"/g, '&quot;');
+    html += `<option value="${safe}">${v}</option>`;
+  });
+  el.innerHTML = html;
+  if (selectedVal && selectedVal !== 'all' && (items || []).includes(selectedVal)) {
+    el.value = selectedVal;
+  } else {
+    el.value = 'all';
+  }
+}
+
+async function loadCeCrossSell(forceReload = false) {
+  const tbody = document.getElementById('ce-table-body');
+  if (tbody && !_ceData) {
+    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--muted);">Loading 5,44,635 CE Cross-Sell Cohort &amp; ClickHouse conversions&hellip;</td></tr>`;
+  }
+  try {
+    if (forceReload) {
+      await fetch('/api/ce-cross-sell/reload', { method: 'POST' });
+    }
+    const qs = _ceQueryParams().toString();
+    const res = await fetch('/api/ce-cross-sell?' + qs);
+    const data = await res.json();
+    if (!res.ok || data.status === 'error') {
+      throw new Error(data.error || 'Failed to load CE Cross-Sell data');
+    }
+    _ceData = data;
+
+    // Populate cascading dropdowns
+    const sel = data.filters?.selected || {};
+    _populateCeSelect('ce-filter-rbm', data.filters?.rbms, `All RBMs (${(data.filters?.rbms || []).length})`, sel.rbm);
+    _populateCeSelect('ce-filter-bdm', data.filters?.bdms, `All BDMs (${(data.filters?.bdms || []).length})`, sel.bdm);
+    _populateCeSelect('ce-filter-store', data.filters?.stores, `All Stores (${(data.filters?.stores || []).length})`, sel.store);
+    _populateCeSelect('ce-filter-product', data.filters?.ce_products, 'All 25 CE Products', sel.ce_product);
+
+    // Update KPI Cards
+    const k = data.kpis || {};
+    const cohortCust = Number(k.cohort_customers || 0);
+    const convBuyers = Number(k.converted_buyers || 0);
+    const convPct = Number(k.conversion_rate_pct || 0);
+    const rev = Number(k.total_revenue || 0);
+    const avgRev = Number(k.avg_revenue_per_buyer || 0);
+    const units = Number(k.total_units_sold || 0);
+    const invs = Number(k.total_invoices || 0);
+    const untapped = Number(k.untapped_customers || 0);
+
+    document.getElementById('ce-kv-cohort').textContent = cohortCust.toLocaleString('en-IN');
+    const isAllCohort = (sel.rbm === 'all' && sel.bdm === 'all' && sel.store === 'all' && sel.segment === 'all');
+    document.getElementById('ce-kv-cohort-sub').innerHTML = isAllCohort
+      ? `Excel Cohort: <strong>${Number(k.total_excel_rows || 544635).toLocaleString('en-IN')}</strong> rows (${cohortCust.toLocaleString('en-IN')} unique mobiles)`
+      : `Filtered Cohort (${((cohortCust / 544634) * 100).toFixed(1)}% of 5,44,634 base)`;
+
+    const segPillsEl = document.getElementById('ce-kv-seg-pills');
+    if (segPillsEl) {
+      segPillsEl.innerHTML = `
+        <span style="background:#eef2ff;color:#4f46e5;padding:3px 7px;border-radius:5px;">📱 Mobile Only: ${Number(k.mobile_only_customers || 0).toLocaleString('en-IN')}</span>
+        <span style="background:#f0fdf4;color:#15803d;padding:3px 7px;border-radius:5px;">💻 Laptop Only: ${Number(k.laptop_only_customers || 0).toLocaleString('en-IN')}</span>
+        <span style="background:#fef3c7;color:#b45309;padding:3px 7px;border-radius:5px;">📱+💻 Both: ${Number(k.both_customers || 0).toLocaleString('en-IN')}</span>
+      `;
+    }
+
+    document.getElementById('ce-kv-conv').textContent = convBuyers.toLocaleString('en-IN');
+    document.getElementById('ce-kv-conv-sub').innerHTML = `Conversion Rate: <strong>${convPct.toFixed(3)}%</strong>`;
+    document.getElementById('ce-kv-untapped').textContent = `Untapped Base: ${untapped.toLocaleString('en-IN')}`;
+
+    document.getElementById('ce-kv-rev').textContent = inr(rev);
+    document.getElementById('ce-kv-rev-sub').innerHTML = `Exact: <strong>${inrExact(rev)}</strong> &bull; Avg/Buyer: ${inrExact(avgRev)}`;
+
+    document.getElementById('ce-kv-units').textContent = units.toLocaleString('en-IN');
+    document.getElementById('ce-kv-units-sub').innerHTML = `<strong>${invs.toLocaleString('en-IN')}</strong> CE Bills &bull; All 25 CE Products`;
+    const latestPos = data.meta?.latest_pos_date || '—';
+    document.getElementById('ce-kv-pos-sync').innerHTML = `Latest ClickHouse POS Date: <strong>${latestPos}</strong>`;
+
+    // Update tab button labels with counts
+    document.getElementById('ce-tab-rbm').textContent = `RBM Wise (${(data.rbm_breakdown || []).length})`;
+    document.getElementById('ce-tab-bdm').textContent = `BDM Wise (${(data.bdm_breakdown || []).length})`;
+    document.getElementById('ce-tab-store').textContent = `Store Wise (${(data.store_breakdown || []).length})`;
+    document.getElementById('ce-tab-products').textContent = `All 25 CE Products (25)`;
+    document.getElementById('ce-tab-daily').textContent = `Daily Conversions (${(data.daily_breakdown || []).length})`;
+    document.getElementById('ce-tab-bills').textContent = `Converted Customer Bills (${Number(data.total_converted_bills || 0).toLocaleString('en-IN')})`;
+
+    renderActiveCeSubTab();
+  } catch (err) {
+    console.error('[CE Cross-Sell Error]', err);
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:36px;color:#dc2626;font-weight:600;">Error loading CE Cross-Sell data: ${err.message}</td></tr>`;
+    }
+  }
+}
+
+function switchCeSubTab(tab) {
+  _ceActiveSubTab = tab;
+  ['rbm', 'bdm', 'store', 'products', 'daily', 'bills'].forEach(t => {
+    const btn = document.getElementById('ce-tab-' + t);
+    if (!btn) return;
+    if (t === tab) {
+      btn.style.background = '#4f46e5';
+      btn.style.color = '#ffffff';
+      btn.style.borderColor = '#4f46e5';
+      btn.style.fontWeight = '700';
+    } else {
+      btn.style.background = '';
+      btn.style.color = '';
+      btn.style.borderColor = '';
+      btn.style.fontWeight = '600';
+    }
+  });
+  renderActiveCeSubTab();
+}
+
+function drillCeFilter(type, val) {
+  if (type === 'rbm') {
+    const el = document.getElementById('ce-filter-rbm');
+    if (el) el.value = val;
+    _ceActiveSubTab = 'bdm';
+    switchCeSubTab('bdm');
+    onCeRbmChange();
+  } else if (type === 'bdm') {
+    const el = document.getElementById('ce-filter-bdm');
+    if (el) el.value = val;
+    _ceActiveSubTab = 'store';
+    switchCeSubTab('store');
+    onCeBdmChange();
+  } else if (type === 'store') {
+    const el = document.getElementById('ce-filter-store');
+    if (el) el.value = val;
+    _ceActiveSubTab = 'products';
+    switchCeSubTab('products');
+    loadCeCrossSell();
+  } else if (type === 'product') {
+    const el = document.getElementById('ce-filter-product');
+    if (el) el.value = val;
+    _ceActiveSubTab = 'bills';
+    switchCeSubTab('bills');
+    loadCeCrossSell();
+  }
+}
+
+function _sortCeRows(rows, sortKey) {
+  const arr = [...(rows || [])];
+  arr.sort((a, b) => {
+    if (sortKey === 'units') return (Number(b.units_sold || b.units || 0) - Number(a.units_sold || a.units || 0)) || (Number(b.revenue || 0) - Number(a.revenue || 0));
+    if (sortKey === 'buyers') return (Number(b.converted_buyers || 0) - Number(a.converted_buyers || 0)) || (Number(b.revenue || 0) - Number(a.revenue || 0));
+    if (sortKey === 'conv_rate') return (Number(b.conversion_rate || 0) - Number(a.conversion_rate || 0)) || (Number(b.revenue || 0) - Number(a.revenue || 0));
+    if (sortKey === 'cohort') return (Number(b.cohort_size || b.skus_in_master || 0) - Number(a.cohort_size || a.skus_in_master || 0));
+    return (Number(b.revenue || 0) - Number(a.revenue || 0)) || (Number(b.cohort_size || b.skus_in_master || 0) - Number(a.cohort_size || a.skus_in_master || 0));
+  });
+  return arr;
+}
+
+function renderActiveCeSubTab() {
+  if (!_ceData) return;
+  const thead = document.getElementById('ce-table-head');
+  const tbody = document.getElementById('ce-table-body');
+  const q = (document.getElementById('ce-table-search')?.value || '').trim().toLowerCase();
+  const sortKey = document.getElementById('ce-sort-by')?.value || 'revenue';
+
+  if (_ceActiveSubTab === 'rbm' || _ceActiveSubTab === 'bdm' || _ceActiveSubTab === 'store') {
+    const isBdm = _ceActiveSubTab === 'bdm';
+    const isStore = _ceActiveSubTab === 'store';
+    const raw = isStore ? _ceData.store_breakdown : (isBdm ? _ceData.bdm_breakdown : _ceData.rbm_breakdown);
+    const filtered = _sortCeRows((raw || []).filter(r => {
+      if (!q) return true;
+      return `${r.name} ${r.rbm || ''} ${r.bdm || ''}`.toLowerCase().includes(q);
+    }), sortKey);
+
+    thead.innerHTML = `<tr>
+      <th>#</th>
+      <th>${isStore ? 'Store Name' : (isBdm ? 'BDM Name' : 'RBM Name')}</th>
+      ${isBdm ? '<th>RBM</th>' : ''}
+      ${isStore ? '<th>RBM</th><th>BDM</th>' : ''}
+      <th style="text-align:right;">Cohort Base</th>
+      <th style="text-align:right;">Mobile Only</th>
+      <th style="text-align:right;">Laptop Only</th>
+      <th style="text-align:right;">Both</th>
+      <th style="text-align:right;">Converted Buyers</th>
+      <th style="text-align:right;">Conv %</th>
+      <th style="text-align:right;">CE Units Sold</th>
+      <th style="text-align:right;">Revenue Generated (&#x20B9;)</th>
+      <th style="text-align:right;">Untapped Base</th>
+    </tr>`;
+
+    if (!filtered.length) {
+      tbody.innerHTML = `<tr><td colspan="13" style="text-align:center;padding:36px;color:var(--muted);">No matching records found.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = filtered.map((r, i) => {
+      const safeName = String(r.name).replace(/'/g, "\\'");
+      return `<tr style="cursor:pointer;" onclick="drillCeFilter('${_ceActiveSubTab}','${safeName}')" title="Click to drill down into ${r.name}">
+        <td style="color:var(--muted);font-weight:600;">${i + 1}</td>
+        <td style="font-weight:700;color:#1e293b;">${r.name}</td>
+        ${isBdm ? `<td><span class="badge b-sms">${r.rbm}</span></td>` : ''}
+        ${isStore ? `<td><span class="badge b-sms">${r.rbm}</span></td><td style="font-weight:600;color:#475569;">${r.bdm}</td>` : ''}
+        <td style="text-align:right;font-weight:700;">${Number(r.cohort_size).toLocaleString('en-IN')}</td>
+        <td style="text-align:right;color:#475569;">${Number(r.mob_only).toLocaleString('en-IN')}</td>
+        <td style="text-align:right;color:#475569;">${Number(r.lap_only).toLocaleString('en-IN')}</td>
+        <td style="text-align:right;color:#475569;">${Number(r.both).toLocaleString('en-IN')}</td>
+        <td style="text-align:right;font-weight:700;color:${r.converted_buyers > 0 ? '#059669' : '#64748b'};">${Number(r.converted_buyers).toLocaleString('en-IN')}</td>
+        <td style="text-align:right;font-weight:600;">${Number(r.conversion_rate).toFixed(3)}%</td>
+        <td style="text-align:right;font-weight:700;color:#d97706;">${Number(r.units_sold).toLocaleString('en-IN')}</td>
+        <td style="text-align:right;font-weight:700;color:#059669;">${inrExact(r.revenue)}</td>
+        <td style="text-align:right;color:#64748b;font-weight:600;">${Number(r.untapped).toLocaleString('en-IN')}</td>
+      </tr>`;
+    }).join('');
+    return;
+  }
+
+  if (_ceActiveSubTab === 'products') {
+    const filtered = _sortCeRows((_ceData.products_25_breakdown || []).filter(r => {
+      if (!q) return true;
+      return `${r.product} ${r.description || ''}`.toLowerCase().includes(q);
+    }), sortKey);
+
+    thead.innerHTML = `<tr>
+      <th>#</th>
+      <th>CE Product (CONSUMER ELECTRONICS)</th>
+      <th>Items Included</th>
+      <th style="text-align:right;">SKUs in Master</th>
+      <th style="text-align:right;">Converted Buyers</th>
+      <th style="text-align:right;">CE Invoices</th>
+      <th style="text-align:right;">Units Sold</th>
+      <th style="text-align:right;">Revenue Generated (&#x20B9;)</th>
+      <th style="text-align:right;">Rev Share %</th>
+    </tr>`;
+
+    tbody.innerHTML = filtered.map((r, i) => {
+      const safeProd = String(r.product).replace(/'/g, "\\'");
+      return `<tr style="cursor:pointer;" onclick="drillCeFilter('product','${safeProd}')" title="Click to filter bills for ${r.product}">
+        <td style="color:var(--muted);font-weight:600;">${i + 1}</td>
+        <td style="font-weight:700;color:#1e293b;">${r.product}</td>
+        <td style="font-size:12px;color:#64748b;max-width:340px;">${r.description || ''}</td>
+        <td style="text-align:right;color:#475569;font-weight:600;">${Number(r.skus_in_master).toLocaleString('en-IN')}</td>
+        <td style="text-align:right;font-weight:700;color:${r.converted_buyers > 0 ? '#059669' : '#64748b'};">${Number(r.converted_buyers).toLocaleString('en-IN')}</td>
+        <td style="text-align:right;font-weight:600;">${Number(r.invoices).toLocaleString('en-IN')}</td>
+        <td style="text-align:right;font-weight:700;color:#d97706;">${Number(r.units_sold).toLocaleString('en-IN')}</td>
+        <td style="text-align:right;font-weight:700;color:#059669;">${inrExact(r.revenue)}</td>
+        <td style="text-align:right;font-weight:600;">${Number(r.share_pct).toFixed(2)}%</td>
+      </tr>`;
+    }).join('');
+    return;
+  }
+
+  if (_ceActiveSubTab === 'daily') {
+    const filtered = (_ceData.daily_breakdown || []).filter(r => !q || `${r.date} ${r.top_product}`.toLowerCase().includes(q));
+    thead.innerHTML = `<tr>
+      <th>Date</th>
+      <th style="text-align:right;">Converted Buyers</th>
+      <th style="text-align:right;">CE Invoices</th>
+      <th style="text-align:right;">CE Units Sold</th>
+      <th style="text-align:right;">Revenue Generated (&#x20B9;)</th>
+      <th>Top CE Product Sold</th>
+    </tr>`;
+    if (!filtered.length) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:36px;color:var(--muted);">No Consumer Electronics conversions recorded yet in the selected date window (Latest ClickHouse POS sync: <strong>${_ceData.meta?.latest_pos_date || '—'}</strong>).</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = filtered.map(r => `<tr>
+      <td style="font-weight:700;color:#1e293b;">${r.date}</td>
+      <td style="text-align:right;font-weight:700;color:#059669;">${Number(r.converted_buyers).toLocaleString('en-IN')}</td>
+      <td style="text-align:right;font-weight:600;">${Number(r.invoices).toLocaleString('en-IN')}</td>
+      <td style="text-align:right;font-weight:700;color:#d97706;">${Number(r.units_sold).toLocaleString('en-IN')}</td>
+      <td style="text-align:right;font-weight:700;color:#059669;">${inrExact(r.revenue)}</td>
+      <td><span class="badge b-wa">${r.top_product}</span></td>
+    </tr>`).join('');
+    return;
+  }
+
+  if (_ceActiveSubTab === 'bills') {
+    const filtered = (_ceData.converted_bills || []).filter(r => {
+      if (!q) return true;
+      return `${r.sale_date} ${r.invoice_no} ${r.customer_mobile} ${r.customer_name} ${r.rbm} ${r.bdm} ${r.cohort_store} ${r.purchase_store} ${r.ce_product} ${r.ce_brand} ${r.item_name}`.toLowerCase().includes(q);
+    });
+    thead.innerHTML = `<tr>
+      <th>Bill Date</th>
+      <th>Invoice No</th>
+      <th>Customer Mobile</th>
+      <th>Customer Name</th>
+      <th>RBM</th>
+      <th>BDM</th>
+      <th>Cohort Store</th>
+      <th>Segment</th>
+      <th>Purchase Store</th>
+      <th>CE Product</th>
+      <th>Brand</th>
+      <th>Item Name</th>
+      <th style="text-align:right;">Units Sold</th>
+      <th style="text-align:right;">Revenue (&#x20B9;)</th>
+    </tr>`;
+    if (!filtered.length) {
+      tbody.innerHTML = `<tr><td colspan="14" style="text-align:center;padding:36px;color:var(--muted);">No converted customer bills recorded yet for the selected filters (Latest ClickHouse POS sync: <strong>${_ceData.meta?.latest_pos_date || '—'}</strong>).</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = filtered.map(r => `<tr>
+      <td style="white-space:nowrap;font-weight:600;">${r.sale_date}</td>
+      <td style="font-family:monospace;font-size:12px;">${r.invoice_no}</td>
+      <td style="font-weight:700;color:#4f46e5;">${r.customer_mobile}</td>
+      <td style="font-weight:600;">${r.customer_name}</td>
+      <td><span class="badge b-sms">${r.rbm}</span></td>
+      <td style="font-weight:600;">${r.bdm}</td>
+      <td>${r.cohort_store}</td>
+      <td>${r.segment}</td>
+      <td style="font-weight:600;color:#0f172a;">${r.purchase_store}</td>
+      <td><span class="badge b-wa">${r.ce_product}</span></td>
+      <td style="font-weight:600;">${r.ce_brand}</td>
+      <td style="font-size:12px;max-width:240px;">${r.item_name}</td>
+      <td style="text-align:right;font-weight:700;color:#d97706;">${Number(r.units).toLocaleString('en-IN')}</td>
+      <td style="text-align:right;font-weight:700;color:#059669;">${inrExact(r.revenue)}</td>
+    </tr>`).join('');
+  }
+}
+</script>
 </body>
 </html>

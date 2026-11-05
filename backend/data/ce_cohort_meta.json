@@ -1,0 +1,46 @@
+{
+  "source_file": "mobile lap no CE Nov 2025 to oct 31 2026.xlsx",
+  "excel_total_rows_with_header": 544635,
+  "total_customer_rows": 544634,
+  "unique_mobiles_count": 544634,
+  "cohort_period": "2025-11-01 to 2026-10-31",
+  "segments": {
+    "Mobile Only": 493852,
+    "Laptop Only": 44593,
+    "Both Mobile & Laptop": 6189
+  },
+  "rbms": {
+    "RENJITH": 152854,
+    "ALFAS": 97335,
+    "SAMEER": 80613,
+    "VAISAKH": 74529,
+    "MAHESH": 70457,
+    "SAMEEM": 64361,
+    "KARNATAKA RBM": 4485
+  },
+  "slabs": {
+    "Gold": 284811,
+    "Silver": 175263,
+    "Platinum": 77269,
+    "Platinum Plus": 4172,
+    "0": 3119
+  },
+  "top_brands": {
+    "APPLE": 111343,
+    "SAMSUNG": 110812,
+    "VIVO": 75977,
+    "XIAOMI": 68386,
+    "OPPO": 52924,
+    "REALME": 43190,
+    "NOKIA": 14105,
+    "HP": 13643,
+    "LENOVO": 12434,
+    "TECNO": 11565,
+    "HMD": 7896,
+    "ASUS": 5327,
+    "ACER": 5053,
+    "DELL": 3867,
+    "GOOGLE": 3482
+  },
+  "ingested_at": "2026-11-05 12:44:23"
+}
