@@ -1279,9 +1279,9 @@
         </div>
       </div>
 
-      <!-- FILTER BAR: RBM, BDM, STORE, SEGMENT, 25 CE PRODUCTS, DATE WINDOW -->
+      <!-- FILTER BAR: RBM, BDM, STORE, DATE WINDOW + APPLY FILTER -->
       <div class="card" style="margin-bottom:20px;padding:16px 20px;">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px;align-items:end;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;align-items:end;">
           <div>
             <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">RBM Filter</label>
             <select id="ce-filter-rbm" class="search-box" style="width:100%;padding:8px 10px;font-weight:600;cursor:pointer;" onchange="onCeRbmChange()">
@@ -1296,20 +1296,24 @@
           </div>
           <div>
             <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">Store Filter</label>
-            <select id="ce-filter-store" class="search-box" style="width:100%;padding:8px 10px;font-weight:600;cursor:pointer;" onchange="loadCeCrossSell()">
+            <select id="ce-filter-store" class="search-box" style="width:100%;padding:8px 10px;font-weight:600;cursor:pointer;">
               <option value="all">All Stores</option>
             </select>
           </div>
           <div>
             <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">Conversion From Date</label>
-            <input type="date" id="ce-filter-start" class="search-box" value="2026-11-01" style="width:100%;padding:7px 10px;font-weight:600;" onchange="loadCeCrossSell()" />
+            <input type="date" id="ce-filter-start" class="search-box" value="2026-11-01" style="width:100%;padding:7px 10px;font-weight:600;" />
           </div>
           <div>
             <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">To Date (Optional)</label>
-            <div style="display:flex;gap:6px;">
-              <input type="date" id="ce-filter-end" class="search-box" style="width:100%;padding:7px 10px;font-weight:600;" onchange="loadCeCrossSell()" />
-              <button class="btn-refresh" onclick="resetCeFilters()" title="Reset all filters" style="padding:7px 10px;font-size:12px;white-space:nowrap;">Reset</button>
-            </div>
+            <input type="date" id="ce-filter-end" class="search-box" style="width:100%;padding:7px 10px;font-weight:600;" />
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button class="btn-refresh" onclick="loadCeCrossSell()" style="flex:1;background:#4f46e5;color:#ffffff;border-color:#4f46e5;padding:8px 14px;font-size:12.5px;font-weight:700;white-space:nowrap;justify-content:center;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+              Apply Filter
+            </button>
+            <button class="btn-refresh" onclick="resetCeFilters()" title="Reset all filters" style="padding:8px 12px;font-size:12.5px;font-weight:600;white-space:nowrap;cursor:pointer;">Reset</button>
           </div>
         </div>
       </div>
@@ -3588,17 +3592,53 @@ function _ceQueryParams() {
 }
 
 function onCeRbmChange() {
-  const bdmEl = document.getElementById('ce-filter-bdm');
-  const stEl = document.getElementById('ce-filter-store');
-  if (bdmEl) bdmEl.value = 'all';
-  if (stEl) stEl.value = 'all';
-  loadCeCrossSell();
+  const rbmVal = document.getElementById('ce-filter-rbm')?.value || 'all';
+  const f = _ceData?.filters || {};
+  const allBdms = f.all_bdms || f.bdms || [];
+  const allStores = f.all_stores || f.stores || [];
+  const rbmBdms = f.rbm_bdms || {};
+  const rbmBdmStores = f.rbm_bdm_stores || {};
+
+  const availBdms = (rbmVal === 'all') ? allBdms : (rbmBdms[rbmVal] || []);
+  let availStores = allStores;
+  if (rbmVal !== 'all') {
+    const stSet = new Set();
+    availBdms.forEach(b => {
+      (rbmBdmStores[`${rbmVal}|||${b}`] || []).forEach(s => stSet.add(s));
+    });
+    availStores = Array.from(stSet).sort();
+  }
+  _populateCeSelect('ce-filter-bdm', availBdms, `All BDMs (${availBdms.length})`, 'all');
+  _populateCeSelect('ce-filter-store', availStores, `All Stores (${availStores.length})`, 'all');
 }
 
 function onCeBdmChange() {
-  const stEl = document.getElementById('ce-filter-store');
-  if (stEl) stEl.value = 'all';
-  loadCeCrossSell();
+  const rbmVal = document.getElementById('ce-filter-rbm')?.value || 'all';
+  const bdmVal = document.getElementById('ce-filter-bdm')?.value || 'all';
+  const f = _ceData?.filters || {};
+  const allRbms = f.rbms || [];
+  const allBdms = f.all_bdms || f.bdms || [];
+  const allStores = f.all_stores || f.stores || [];
+  const rbmBdms = f.rbm_bdms || {};
+  const rbmBdmStores = f.rbm_bdm_stores || {};
+
+  let availStores = allStores;
+  if (rbmVal !== 'all' && bdmVal === 'all') {
+    const stSet = new Set();
+    (rbmBdms[rbmVal] || []).forEach(b => {
+      (rbmBdmStores[`${rbmVal}|||${b}`] || []).forEach(s => stSet.add(s));
+    });
+    availStores = Array.from(stSet).sort();
+  } else if (rbmVal === 'all' && bdmVal !== 'all') {
+    const stSet = new Set();
+    allRbms.forEach(r => {
+      (rbmBdmStores[`${r}|||${bdmVal}`] || []).forEach(s => stSet.add(s));
+    });
+    availStores = Array.from(stSet).sort();
+  } else if (rbmVal !== 'all' && bdmVal !== 'all') {
+    availStores = rbmBdmStores[`${rbmVal}|||${bdmVal}`] || [];
+  }
+  _populateCeSelect('ce-filter-store', availStores, `All Stores (${availStores.length})`, 'all');
 }
 
 function resetCeFilters() {

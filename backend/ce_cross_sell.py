@@ -666,6 +666,10 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
             'rbms': mem['all_rbms'],
             'bdms': avail_bdms,
             'stores': avail_stores,
+            'all_bdms': mem['all_bdms'],
+            'all_stores': mem['all_stores'],
+            'rbm_bdms': mem['rbm_bdms'],
+            'rbm_bdm_stores': mem['rbm_bdm_stores'],
             'segments': mem['all_segments'],
             'ce_products': [x['product'] for x in ALL_25_CE_PRODUCTS]
         },
