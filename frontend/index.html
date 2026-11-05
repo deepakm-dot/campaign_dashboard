@@ -3834,19 +3834,15 @@ function renderActiveCeSubTab() {
       <th>${isStore ? 'Store Name' : (isBdm ? 'BDM Name' : 'RBM Name')}</th>
       ${isBdm ? '<th>RBM</th>' : ''}
       ${isStore ? '<th>RBM</th><th>BDM</th>' : ''}
-      <th style="text-align:right;">Cohort Base</th>
-      <th style="text-align:right;">Mobile Only</th>
-      <th style="text-align:right;">Laptop Only</th>
-      <th style="text-align:right;">Both</th>
-      <th style="text-align:right;">Converted Buyers</th>
-      <th style="text-align:right;">Conv %</th>
+      <th style="text-align:right;">Cohort Customers</th>
+      <th style="text-align:right;">Conversion %</th>
       <th style="text-align:right;">CE Units Sold</th>
-      <th style="text-align:right;">Revenue Generated (&#x20B9;)</th>
+      <th style="text-align:right;">CE Revenue Generated (&#x20B9;)</th>
       <th style="text-align:right;">Untapped Base</th>
     </tr>`;
 
     if (!filtered.length) {
-      tbody.innerHTML = `<tr><td colspan="13" style="text-align:center;padding:36px;color:var(--muted);">No matching records found.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:36px;color:var(--muted);">No matching records found.</td></tr>`;
       return;
     }
 
@@ -3858,11 +3854,7 @@ function renderActiveCeSubTab() {
         ${isBdm ? `<td><span class="badge b-sms">${r.rbm}</span></td>` : ''}
         ${isStore ? `<td><span class="badge b-sms">${r.rbm}</span></td><td style="font-weight:600;color:#475569;">${r.bdm}</td>` : ''}
         <td style="text-align:right;font-weight:700;">${Number(r.cohort_size).toLocaleString('en-IN')}</td>
-        <td style="text-align:right;color:#475569;">${Number(r.mob_only).toLocaleString('en-IN')}</td>
-        <td style="text-align:right;color:#475569;">${Number(r.lap_only).toLocaleString('en-IN')}</td>
-        <td style="text-align:right;color:#475569;">${Number(r.both).toLocaleString('en-IN')}</td>
-        <td style="text-align:right;font-weight:700;color:${r.converted_buyers > 0 ? '#059669' : '#64748b'};">${Number(r.converted_buyers).toLocaleString('en-IN')}</td>
-        <td style="text-align:right;font-weight:600;">${Number(r.conversion_rate).toFixed(3)}%</td>
+        <td style="text-align:right;font-weight:600;">${Number(r.conversion_rate).toFixed(2)}%</td>
         <td style="text-align:right;font-weight:700;color:#d97706;">${Number(r.units_sold).toLocaleString('en-IN')}</td>
         <td style="text-align:right;font-weight:700;color:#059669;">${inrExact(r.revenue)}</td>
         <td style="text-align:right;color:#64748b;font-weight:600;">${Number(r.untapped).toLocaleString('en-IN')}</td>
