@@ -1261,19 +1261,22 @@
 
     <!-- CE CROSS-SELL COHORT PAGE -->
     <div class="content" id="pg-ce" style="display:none;">
-      <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:14px;">
-        <div>
-          <div class="page-title" style="display:flex;align-items:center;gap:10px;">
-            <span>📺 CE Cross-Sell Cohort Tracker</span>
+      <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;margin-bottom:20px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#eef2ff 0%,#e0e7ff 100%);border:1px solid #c7d2fe;display:flex;align-items:center;justify-content:center;color:#4f46e5;box-shadow:0 1px 2px rgba(79,70,229,0.08);flex-shrink:0;">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          </div>
+          <div>
+            <h1 style="font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:21px;font-weight:600;letter-spacing:-0.02em;color:#0f172a;line-height:1.25;margin:0;-webkit-font-smoothing:antialiased;">CE Cross-Sell Cohort Tracker</h1>
           </div>
         </div>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-          <button class="btn-refresh" onclick="exportCeCrossSellExcel()" style="background:#059669;color:#ffffff;border-color:#059669;display:inline-flex;align-items:center;gap:6px;">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <button class="btn-refresh" onclick="exportCeCrossSellExcel()" style="background:#059669;color:#ffffff;border-color:#059669;display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;padding:8px 14px;border-radius:8px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Export Excel Report
           </button>
-          <button class="btn-refresh" onclick="loadCeCrossSell(true)" style="display:inline-flex;align-items:center;gap:6px;">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+          <button class="btn-refresh" onclick="loadCeCrossSell(true)" style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;padding:8px 14px;border-radius:8px;color:#334155;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
             Refresh CE Tracker
           </button>
         </div>
@@ -1281,39 +1284,39 @@
 
       <!-- FILTER BAR: RBM, BDM, STORE, DATE WINDOW + APPLY FILTER -->
       <div class="card" style="margin-bottom:20px;padding:16px 20px;">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;align-items:end;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(138px,1fr));gap:12px;align-items:end;">
           <div>
-            <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">RBM Filter</label>
-            <select id="ce-filter-rbm" class="search-box" style="width:100%;padding:8px 10px;font-weight:600;cursor:pointer;" onchange="onCeRbmChange()">
+            <label style="display:block;font-size:10.5px;font-weight:600;letter-spacing:0.05em;color:#64748b;text-transform:uppercase;margin-bottom:6px;">RBM Filter</label>
+            <select id="ce-filter-rbm" class="search-box" style="width:100%;padding:8px 10px;font-size:12.5px;font-weight:500;color:#1e293b;cursor:pointer;" onchange="onCeRbmChange()">
               <option value="all">All RBMs</option>
             </select>
           </div>
           <div>
-            <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">BDM Filter</label>
-            <select id="ce-filter-bdm" class="search-box" style="width:100%;padding:8px 10px;font-weight:600;cursor:pointer;" onchange="onCeBdmChange()">
+            <label style="display:block;font-size:10.5px;font-weight:600;letter-spacing:0.05em;color:#64748b;text-transform:uppercase;margin-bottom:6px;">BDM Filter</label>
+            <select id="ce-filter-bdm" class="search-box" style="width:100%;padding:8px 10px;font-size:12.5px;font-weight:500;color:#1e293b;cursor:pointer;" onchange="onCeBdmChange()">
               <option value="all">All BDMs</option>
             </select>
           </div>
           <div>
-            <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">Store Filter</label>
-            <select id="ce-filter-store" class="search-box" style="width:100%;padding:8px 10px;font-weight:600;cursor:pointer;">
+            <label style="display:block;font-size:10.5px;font-weight:600;letter-spacing:0.05em;color:#64748b;text-transform:uppercase;margin-bottom:6px;">Store Filter</label>
+            <select id="ce-filter-store" class="search-box" style="width:100%;padding:8px 10px;font-size:12.5px;font-weight:500;color:#1e293b;cursor:pointer;">
               <option value="all">All Stores</option>
             </select>
           </div>
           <div>
-            <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">Conversion From Date</label>
-            <input type="date" id="ce-filter-start" class="search-box" value="2026-11-01" style="width:100%;padding:7px 10px;font-weight:600;" />
+            <label style="display:block;font-size:10.5px;font-weight:600;letter-spacing:0.05em;color:#64748b;text-transform:uppercase;margin-bottom:6px;">Conversion From Date</label>
+            <input type="date" id="ce-filter-start" class="search-box" value="2026-11-01" style="width:100%;padding:7px 10px;font-size:12.5px;font-weight:500;color:#1e293b;" />
           </div>
           <div>
-            <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px;">To Date (Optional)</label>
-            <input type="date" id="ce-filter-end" class="search-box" style="width:100%;padding:7px 10px;font-weight:600;" />
+            <label style="display:block;font-size:10.5px;font-weight:600;letter-spacing:0.05em;color:#64748b;text-transform:uppercase;margin-bottom:6px;">To Date (Optional)</label>
+            <input type="date" id="ce-filter-end" class="search-box" style="width:100%;padding:7px 10px;font-size:12.5px;font-weight:500;color:#1e293b;" />
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
-            <button class="btn-refresh" onclick="loadCeCrossSell()" style="flex:1;background:#4f46e5;color:#ffffff;border-color:#4f46e5;padding:8px 14px;font-size:12.5px;font-weight:700;white-space:nowrap;justify-content:center;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+            <button class="btn-refresh" onclick="loadCeCrossSell()" style="flex:1;background:#4f46e5;color:#ffffff;border-color:#4f46e5;padding:8px 14px;font-size:12.5px;font-weight:600;border-radius:8px;white-space:nowrap;justify-content:center;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
               Apply Filter
             </button>
-            <button class="btn-refresh" onclick="resetCeFilters()" title="Reset all filters" style="padding:8px 12px;font-size:12.5px;font-weight:600;white-space:nowrap;cursor:pointer;">Reset</button>
+            <button class="btn-refresh" onclick="resetCeFilters()" title="Reset all filters" style="padding:8px 12px;font-size:12.5px;font-weight:500;border-radius:8px;color:#475569;white-space:nowrap;cursor:pointer;">Reset</button>
           </div>
         </div>
       </div>
@@ -1322,28 +1325,28 @@
       <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr));margin-bottom:20px;">
         <div class="kpi-card c1">
           <div class="kpi-icon">&#x1F465;</div>
-          <div class="kpi-label">Target Cohort Customers</div>
-          <div class="kpi-value" id="ce-kv-cohort">5,44,634</div>
-          <div class="kpi-sub" id="ce-kv-cohort-sub">Excel File: 5,44,635 rows (incl. header)</div>
-          <div id="ce-kv-seg-pills" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;font-size:11px;font-weight:600;"></div>
+          <div class="kpi-label" style="font-size:10.5px;font-weight:600;letter-spacing:0.06em;color:#64748b;">Target Cohort Customers</div>
+          <div class="kpi-value" id="ce-kv-cohort" style="font-size:30px;font-weight:700;letter-spacing:-0.025em;font-variant-numeric:tabular-nums;">5,44,634</div>
+          <div class="kpi-sub" id="ce-kv-cohort-sub" style="font-size:11.5px;color:#64748b;margin-top:8px;">Excel File: 5,44,635 rows (incl. header)</div>
+          <div id="ce-kv-seg-pills" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;font-weight:500;"></div>
         </div>
         <div class="kpi-card c2">
           <div class="kpi-icon">&#x2705;</div>
-          <div class="kpi-label">Converted CE Buyers</div>
-          <div class="kpi-value" id="ce-kv-conv">0</div>
-          <div class="kpi-sub" id="ce-kv-conv-sub">Conversion Rate: 0.000%</div>
-          <div id="ce-kv-untapped" style="margin-top:8px;font-size:11.5px;font-weight:700;color:#059669;background:#ecfdf5;padding:5px 9px;border-radius:6px;display:inline-block;">Untapped Base: 5,44,634</div>
+          <div class="kpi-label" style="font-size:10.5px;font-weight:600;letter-spacing:0.06em;color:#64748b;">Converted CE Buyers</div>
+          <div class="kpi-value" id="ce-kv-conv" style="font-size:30px;font-weight:700;letter-spacing:-0.025em;font-variant-numeric:tabular-nums;">0</div>
+          <div class="kpi-sub" id="ce-kv-conv-sub" style="font-size:11.5px;color:#64748b;margin-top:8px;">Conversion Rate: 0.000%</div>
+          <div id="ce-kv-untapped" style="margin-top:10px;font-size:11px;font-weight:600;color:#047857;background:#ecfdf5;border:1px solid #a7f3d0;padding:4px 9px;border-radius:6px;display:inline-block;">Untapped Base: 5,44,634</div>
         </div>
         <div class="kpi-card c3">
           <div class="kpi-icon">&#x1F4B0;</div>
-          <div class="kpi-label">Revenue Generated (CE)</div>
-          <div class="kpi-value" id="ce-kv-rev">&#x20B9;0</div>
-          <div class="kpi-sub" id="ce-kv-rev-sub">Exact: &#x20B9;0 &bull; Avg/Buyer: &#x20B9;0</div>
+          <div class="kpi-label" style="font-size:10.5px;font-weight:600;letter-spacing:0.06em;color:#64748b;">Revenue Generated (CE)</div>
+          <div class="kpi-value" id="ce-kv-rev" style="font-size:30px;font-weight:700;letter-spacing:-0.025em;font-variant-numeric:tabular-nums;">&#x20B9;0</div>
+          <div class="kpi-sub" id="ce-kv-rev-sub" style="font-size:11.5px;color:#64748b;margin-top:8px;">Exact: &#x20B9;0 &bull; Avg/Buyer: &#x20B9;0</div>
         </div>
         <div class="kpi-card c1" style="border-top:4px solid #f59e0b;">
           <div class="kpi-icon">&#x1F4E6;</div>
-          <div class="kpi-label">CE Units Sold</div>
-          <div class="kpi-value" id="ce-kv-units" style="color:#d97706;">0</div>
+          <div class="kpi-label" style="font-size:10.5px;font-weight:600;letter-spacing:0.06em;color:#64748b;">CE Units Sold</div>
+          <div class="kpi-value" id="ce-kv-units" style="color:#d97706;font-size:30px;font-weight:700;letter-spacing:-0.025em;font-variant-numeric:tabular-nums;">0</div>
         </div>
       </div>
 
@@ -3720,9 +3723,9 @@ async function loadCeCrossSell(forceReload = false) {
     const segPillsEl = document.getElementById('ce-kv-seg-pills');
     if (segPillsEl) {
       segPillsEl.innerHTML = `
-        <span style="background:#eef2ff;color:#4f46e5;padding:3px 7px;border-radius:5px;">📱 Mobile Only: ${Number(k.mobile_only_customers || 0).toLocaleString('en-IN')}</span>
-        <span style="background:#f0fdf4;color:#15803d;padding:3px 7px;border-radius:5px;">💻 Laptop Only: ${Number(k.laptop_only_customers || 0).toLocaleString('en-IN')}</span>
-        <span style="background:#fef3c7;color:#b45309;padding:3px 7px;border-radius:5px;">📱+💻 Both: ${Number(k.both_customers || 0).toLocaleString('en-IN')}</span>
+        <span style="display:inline-flex;align-items:center;gap:5px;background:#eef2ff;color:#4338ca;border:1px solid #e0e7ff;padding:3px 8px;border-radius:6px;font-variant-numeric:tabular-nums;"><span style="width:6px;height:6px;border-radius:50%;background:#4f46e5;"></span>Mobile Only: <strong>${Number(k.mobile_only_customers || 0).toLocaleString('en-IN')}</strong></span>
+        <span style="display:inline-flex;align-items:center;gap:5px;background:#f0fdf4;color:#15803d;border:1px solid #dcfce7;padding:3px 8px;border-radius:6px;font-variant-numeric:tabular-nums;"><span style="width:6px;height:6px;border-radius:50%;background:#16a34a;"></span>Laptop Only: <strong>${Number(k.laptop_only_customers || 0).toLocaleString('en-IN')}</strong></span>
+        <span style="display:inline-flex;align-items:center;gap:5px;background:#fffbeb;color:#b45309;border:1px solid #fef3c7;padding:3px 8px;border-radius:6px;font-variant-numeric:tabular-nums;"><span style="width:6px;height:6px;border-radius:50%;background:#d97706;"></span>Both: <strong>${Number(k.both_customers || 0).toLocaleString('en-IN')}</strong></span>
       `;
     }
 
