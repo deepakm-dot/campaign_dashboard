@@ -1330,8 +1330,7 @@
           <div class="kpi-icon">&#x1F465;</div>
           <div class="kpi-label" style="font-size:10.5px;font-weight:600;letter-spacing:0.06em;color:#64748b;">Target Cohort Customers</div>
           <div class="kpi-value" id="ce-kv-cohort" style="font-size:30px;font-weight:700;letter-spacing:-0.025em;font-variant-numeric:tabular-nums;">5,44,634</div>
-          <div class="kpi-sub" id="ce-kv-cohort-sub" style="font-size:11.5px;color:#64748b;margin-top:8px;">Excel File: 5,44,635 rows (incl. header)</div>
-          <div id="ce-kv-seg-pills" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;font-weight:500;"></div>
+          <div id="ce-kv-seg-pills" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;font-size:11px;font-weight:500;"></div>
         </div>
         <div class="kpi-card c2">
           <div class="kpi-icon">&#x2705;</div>
@@ -3718,10 +3717,6 @@ async function loadCeCrossSell(forceReload = false) {
     const untapped = Number(k.untapped_customers || 0);
 
     document.getElementById('ce-kv-cohort').textContent = cohortCust.toLocaleString('en-IN');
-    const isAllCohort = (sel.rbm === 'all' && sel.bdm === 'all' && sel.store === 'all' && sel.segment === 'all');
-    document.getElementById('ce-kv-cohort-sub').innerHTML = isAllCohort
-      ? `Excel Cohort: <strong>${Number(k.total_excel_rows || 544635).toLocaleString('en-IN')}</strong> rows (${cohortCust.toLocaleString('en-IN')} unique mobiles)`
-      : `Filtered Cohort (${((cohortCust / 544634) * 100).toFixed(1)}% of 5,44,634 base)`;
 
     const segPillsEl = document.getElementById('ce-kv-seg-pills');
     if (segPillsEl) {
