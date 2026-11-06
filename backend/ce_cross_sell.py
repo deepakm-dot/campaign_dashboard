@@ -29,10 +29,8 @@ DATA_DIR = os.path.join(BASE_DIR, 'data')
 os.makedirs(DATA_DIR, exist_ok=True)
 
 DEFAULT_EXCEL_PATH = os.path.join(ROOT_DIR, 'reports', 'mobile lap no CE Nov 2025 to oct 31 2026.xlsx')
-FALLBACK_DOWNLOADS_EXCEL = r'c:\Users\deepak.m_myg\Downloads\mobile lap no CE Nov 2025 to oct 31 2026.xlsx'
 CACHE_GZ_PATH = os.path.join(DATA_DIR, 'ce_cohort_customers.csv.gz')
 CACHE_META_PATH = os.path.join(DATA_DIR, 'ce_cohort_meta.json')
-RECOVERED_NOV1_3_PATH = os.path.join(DATA_DIR, 'ce_nov1_3_recovered_customers.json')
 
 # All 25 verified products under im.category = 'CONSUMER ELECTRONICS' in item_master
 ALL_25_CE_PRODUCTS = [
@@ -69,7 +67,6 @@ _COHORT_MEM = {
     'meta': {},
     # mobile -> tuple(rbm, bdm, customer_name, slab, available_points, store_name, segment, brand, last_purchase_date)
     'by_mobile': {},
-    'recovered_nov1_3': {},
     # Pre-indexed filter hierarchy and cohort counts
     'rbm_bdms': {},       # rbm -> sorted list of bdms
     'rbm_bdm_stores': {}, # (rbm, bdm) -> sorted list of stores
@@ -111,8 +108,6 @@ def build_cache_from_excel(excel_path=None):
     if not path or not os.path.exists(path):
         if os.path.exists(DEFAULT_EXCEL_PATH):
             path = DEFAULT_EXCEL_PATH
-        elif os.path.exists(FALLBACK_DOWNLOADS_EXCEL):
-            path = FALLBACK_DOWNLOADS_EXCEL
         elif os.path.exists(CACHE_GZ_PATH):
             _SALES_CACHE['ts'] = 0
             if os.path.exists(CACHE_META_PATH):
