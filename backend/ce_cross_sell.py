@@ -239,37 +239,10 @@ def ensure_cohort_loaded(force=False):
             rbm_bdms[rbm].add(bdm)
             rbm_bdm_stores[(rbm, bdm)].add(sname)
 
-    recovered_nov1_3 = {}
-    if os.path.exists(RECOVERED_NOV1_3_PATH):
-        try:
-            with open(RECOVERED_NOV1_3_PATH, 'r', encoding='utf-8') as rf:
-                raw_rec = json.load(rf)
-            for mob_k, val in raw_rec.items():
-                if isinstance(val, (list, tuple)) and len(val) >= 9 and mob_k not in by_mobile:
-                    rbm = (val[0] or 'UNASSIGNED').strip().upper()
-                    bdm = (val[1] or 'UNASSIGNED').strip().upper()
-                    cname = str(val[2] or '')
-                    slab = str(val[3] or '')
-                    pts = val[4] if val[4] is not None else 0
-                    sname = (val[5] or 'UNASSIGNED').strip().upper()
-                    seg = str(val[6] or 'Mobile Only')
-                    brand = str(val[7] or '')
-                    lpd = str(val[8] or '')
-                    recovered_nov1_3[mob_k] = (rbm, bdm, cname, slab, pts, sname, seg, brand, lpd)
-                    all_rbms.add(rbm)
-                    all_bdms.add(bdm)
-                    all_stores.add(sname)
-                    all_segments.add(seg)
-                    rbm_bdms[rbm].add(bdm)
-                    rbm_bdm_stores[(rbm, bdm)].add(sname)
-        except Exception:
-            recovered_nov1_3 = {}
-
     with _LOCK:
         _COHORT_MEM['loaded'] = True
         _COHORT_MEM['meta'] = meta
         _COHORT_MEM['by_mobile'] = by_mobile
-        _COHORT_MEM['recovered_nov1_3'] = recovered_nov1_3
         _COHORT_MEM['rbm_bdms'] = {k: sorted(v) for k, v in rbm_bdms.items()}
         _COHORT_MEM['rbm_bdm_stores'] = {f"{k[0]}|||{k[1]}": sorted(v) for k, v in rbm_bdm_stores.items()}
         _COHORT_MEM['all_rbms'] = sorted(all_rbms)
@@ -377,7 +350,6 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
     """
     mem = ensure_cohort_loaded()
     by_mobile = mem['by_mobile']
-    recovered_nov1_3 = mem.get('recovered_nov1_3', {})
 
     f_rbm = (rbm or 'all').strip().upper()
     if f_rbm == 'ALL':
@@ -499,7 +471,7 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
         mob = _clean_mobile(r.get('customer_mobile'))
         if not mob:
             continue
-        rec = by_mobile.get(mob) or recovered_nov1_3.get(mob)
+        rec = by_mobile.get(mob)
         if not rec:
             continue
 
