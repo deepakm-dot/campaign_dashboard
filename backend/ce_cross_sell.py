@@ -95,17 +95,33 @@ def _clean_mobile(val):
     return digits[-10:] if len(digits) >= 10 else ''
 
 
+def _norm_date(d_str, default=''):
+    s = str(d_str or '').strip()[:10]
+    if not s:
+        return default
+    parts = s.replace('/', '-').split('-')
+    if len(parts) == 3 and len(parts[0]) == 2 and len(parts[2]) == 4:
+        return f"{parts[2]}-{parts[1]}-{parts[0]}"
+    return s
+
+
 def build_cache_from_excel(excel_path=None):
     """Parse the Excel cohort file and write compressed CSV + metadata JSON."""
-    import openpyxl
     path = excel_path
     if not path or not os.path.exists(path):
         if os.path.exists(DEFAULT_EXCEL_PATH):
             path = DEFAULT_EXCEL_PATH
         elif os.path.exists(FALLBACK_DOWNLOADS_EXCEL):
             path = FALLBACK_DOWNLOADS_EXCEL
+        elif os.path.exists(CACHE_GZ_PATH):
+            _SALES_CACHE['ts'] = 0
+            if os.path.exists(CACHE_META_PATH):
+                with open(CACHE_META_PATH, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            return {'status': 'cached'}
         else:
             raise FileNotFoundError(f"Cohort Excel file not found at {DEFAULT_EXCEL_PATH}")
+    import openpyxl
 
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     ws = wb[wb.sheetnames[0]]
@@ -267,77 +283,85 @@ def _fetch_ce_sales(start_date='2026-11-01', end_date=''):
     """
     Strictly READ-ONLY ClickHouse query (`ch_db.query` with `readonly=1`) fetching
     all Consumer Electronics (`im.category = 'CONSUMER ELECTRONICS'`) sales transactions
-    in the given date window. Cached for 45 seconds for snappy interactive filtering.
+    in the given date window. Caches base 2026-11-01+ rows for 300s and filters by date in memory.
     """
-    sd = (start_date or '2026-11-01')[:10]
-    ed = (end_date or '')[:10]
-    cache_key = (sd, ed)
+    sd = _norm_date(start_date, '2026-11-01')
+    ed = _norm_date(end_date, '')
+    base_sd = '2026-11-01' if sd >= '2026-11-01' else sd
     now = time.time()
-    if _SALES_CACHE['key'] == cache_key and (now - _SALES_CACHE['ts']) < 45:
-        return _SALES_CACHE['rows'], _SALES_CACHE['latest_pos_date']
 
-    # Check latest POS date in azure_sales_report (read-only)
-    latest_rows = ch_db.query("SELECT toString(max(toDate(date))) AS max_d FROM azure_sales_report", timeout=30)
-    latest_pos_date = (latest_rows[0].get('max_d') if latest_rows else '') or ''
+    if _SALES_CACHE.get('key') == base_sd and (now - _SALES_CACHE.get('ts', 0)) < 300 and _SALES_CACHE.get('rows'):
+        base_rows = _SALES_CACHE['rows']
+        latest_pos_date = _SALES_CACHE['latest_pos_date']
+    else:
+        # Check latest POS date in azure_sales_report (read-only)
+        latest_rows = ch_db.query("SELECT toString(max(toDate(date))) AS max_d FROM azure_sales_report", timeout=30)
+        latest_pos_date = (latest_rows[0].get('max_d') if latest_rows else '') or ''
 
-    date_cond = f"toDate(s.date) >= '{sd}'"
-    if ed:
-        date_cond += f" AND toDate(s.date) <= '{ed}'"
+        date_cond = f"toDate(s.date) >= '{base_sd}'"
 
-    # Include all 25 products under im.category = 'CONSUMER ELECTRONICS'
-    # (plus standardized CE item_code prefix fallback if a brand-new SKU is not yet in item_master)
-    ce_cat_cond = (
-        "(im.category = 'CONSUMER ELECTRONICS' OR "
-        "(coalesce(im.item_code, '') = '' AND regexpExtract(s.item_code, '^[A-Z]+', 0) IN "
-        "('TV', 'AC', 'REF', 'WSM', 'WM', 'FAN', 'CEG', 'VMC', 'WTH', 'CMY', 'WPU')))"
-    )
-    prod_expr = (
-        "if(coalesce(im.product, '') != '', im.product, "
-        "multiIf("
-        "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'TV', 'TV', "
-        "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'AC' AND abs(toFloat64(s.sold_price)) < 100, 'AC OUTDOOR', "
-        "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'AC', 'AIR CONDITIONER', "
-        "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'REF', 'REFRIGERATORS', "
-        "regexpExtract(s.item_code, '^[A-Z]+', 0) IN ('WSM', 'WM'), 'WASHING MACHINES', "
-        "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'FAN', 'SMALL APPLIANCES', "
-        "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'CEG', 'CEGI', "
-        "regexpExtract(s.item_code, '^[A-Z]+', 0) IN ('VMC', 'WTH', 'CMY', 'WPU'), 'HOME APPLIANCES', "
-        "'HOME APPLIANCES'))"
-    )
-    is_od_expr = f"(({prod_expr}) = 'AC OUTDOOR' OR lower(coalesce(im.item_category, '')) = 'ac outdoor' OR lower(coalesce(im.item_name, '')) LIKE 'o/d%')"
-    units_expr = f"if({is_od_expr}, 0, if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), if(toFloat64(s.sold_price) < 0, 0, toInt64(s.qty))))"
-    raw_qty_expr = "if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), toInt64(s.qty))"
+        # Include all 25 products under im.category = 'CONSUMER ELECTRONICS'
+        # (plus standardized CE item_code prefix fallback if a brand-new SKU is not yet in item_master)
+        ce_cat_cond = (
+            "(im.category = 'CONSUMER ELECTRONICS' OR "
+            "(coalesce(im.item_code, '') = '' AND regexpExtract(s.item_code, '^[A-Z]+', 0) IN "
+            "('TV', 'AC', 'REF', 'WSM', 'WM', 'FAN', 'CEG', 'VMC', 'WTH', 'CMY', 'WPU')))"
+        )
+        prod_expr = (
+            "if(coalesce(im.product, '') != '', im.product, "
+            "multiIf("
+            "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'TV', 'TV', "
+            "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'AC' AND abs(toFloat64(s.sold_price)) < 100, 'AC OUTDOOR', "
+            "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'AC', 'AIR CONDITIONER', "
+            "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'REF', 'REFRIGERATORS', "
+            "regexpExtract(s.item_code, '^[A-Z]+', 0) IN ('WSM', 'WM'), 'WASHING MACHINES', "
+            "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'FAN', 'SMALL APPLIANCES', "
+            "regexpExtract(s.item_code, '^[A-Z]+', 0) = 'CEG', 'CEGI', "
+            "regexpExtract(s.item_code, '^[A-Z]+', 0) IN ('VMC', 'WTH', 'CMY', 'WPU'), 'HOME APPLIANCES', "
+            "'HOME APPLIANCES'))"
+        )
+        is_od_expr = f"(({prod_expr}) = 'AC OUTDOOR' OR lower(coalesce(im.item_category, '')) = 'ac outdoor' OR lower(coalesce(im.item_name, '')) LIKE 'o/d%')"
+        units_expr = f"if({is_od_expr}, 0, if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), if(toFloat64(s.sold_price) < 0, 0, toInt64(s.qty))))"
+        raw_qty_expr = "if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), toInt64(s.qty))"
 
-    sql = f"""
-        SELECT
-            toString(toDate(s.date)) AS sale_date,
-            trim(i.customer_mobile) AS customer_mobile,
-            s.invoice_no AS invoice_no,
-            s.branch AS branch,
-            coalesce(nullIf(trim(bm.branch_name), ''), s.branch) AS purchase_store,
-            ({prod_expr}) AS ce_product,
-            coalesce(nullIf(trim(im.item_category), ''), ({prod_expr})) AS item_category,
-            coalesce(nullIf(trim(im.brand), ''), '-') AS ce_brand,
-            coalesce(nullIf(trim(im.item_name), ''), s.item_code) AS item_name,
-            sum({units_expr}) AS net_units,
-            sum({raw_qty_expr}) AS raw_qty,
-            round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) AS revenue
-        FROM azure_sales_report s
-        INNER JOIN azure_invoice_report i ON i.invoice_no = s.invoice_no
-        LEFT JOIN item_master im ON im.item_code = s.item_code
-        LEFT JOIN branch_master bm ON bm.code = s.branch
-        WHERE {date_cond}
-          AND {ce_cat_cond}
-          AND length(trim(i.customer_mobile)) >= 10
-        GROUP BY sale_date, customer_mobile, invoice_no, branch, purchase_store, ce_product, item_category, ce_brand, item_name
-        ORDER BY sale_date DESC, revenue DESC
-    """
-    rows = ch_db.query(sql, timeout=120) or []
-    _SALES_CACHE['key'] = cache_key
-    _SALES_CACHE['ts'] = now
-    _SALES_CACHE['rows'] = rows
-    _SALES_CACHE['latest_pos_date'] = latest_pos_date
-    return rows, latest_pos_date
+        sql = f"""
+            SELECT
+                toString(toDate(s.date)) AS sale_date,
+                trim(i.customer_mobile) AS customer_mobile,
+                s.invoice_no AS invoice_no,
+                s.branch AS branch,
+                coalesce(nullIf(trim(bm.branch_name), ''), s.branch) AS purchase_store,
+                ({prod_expr}) AS ce_product,
+                coalesce(nullIf(trim(im.item_category), ''), ({prod_expr})) AS item_category,
+                coalesce(nullIf(trim(im.brand), ''), '-') AS ce_brand,
+                coalesce(nullIf(trim(im.item_name), ''), s.item_code) AS item_name,
+                sum({units_expr}) AS net_units,
+                sum({raw_qty_expr}) AS raw_qty,
+                round(sum(toFloat64(s.sold_price) * toInt64(s.qty)), 2) AS revenue
+            FROM azure_sales_report s
+            INNER JOIN azure_invoice_report i ON i.invoice_no = s.invoice_no
+            LEFT JOIN item_master im ON im.item_code = s.item_code
+            LEFT JOIN branch_master bm ON bm.code = s.branch
+            WHERE {date_cond}
+              AND {ce_cat_cond}
+              AND length(trim(i.customer_mobile)) >= 10
+            GROUP BY sale_date, customer_mobile, invoice_no, branch, purchase_store, ce_product, item_category, ce_brand, item_name
+            ORDER BY sale_date DESC, revenue DESC
+        """
+        base_rows = ch_db.query(sql, timeout=120) or []
+        _SALES_CACHE['key'] = base_sd
+        _SALES_CACHE['ts'] = now
+        _SALES_CACHE['rows'] = base_rows
+        _SALES_CACHE['latest_pos_date'] = latest_pos_date
+
+    if sd == base_sd and not ed:
+        return base_rows, latest_pos_date
+
+    filtered_rows = [
+        r for r in base_rows
+        if str(r.get('sale_date') or '') >= sd and (not ed or str(r.get('sale_date') or '') <= ed)
+    ]
+    return filtered_rows, latest_pos_date
 
 
 def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_product='all',
@@ -410,51 +434,48 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
     for mob, rec in by_mobile.items():
         c_rbm, c_bdm, c_name, c_slab, c_pts, c_store, c_seg, c_brand, c_lpd = rec
 
-        # Always populate RBM breakdown (respecting Segment filter if set)
-        if f_seg == 'all' or c_seg == f_seg:
-            r_entry = rbm_cohort[c_rbm]
-            r_entry['cohort'] += 1
-            if c_seg == 'Mobile Only':
-                r_entry['mob_only'] += 1
-            elif c_seg == 'Laptop Only':
-                r_entry['lap_only'] += 1
-            else:
-                r_entry['both'] += 1
-
-            if f_rbm == 'all' or c_rbm == f_rbm:
-                b_entry = bdm_cohort[c_bdm]
-                b_entry['rbm'] = c_rbm
-                b_entry['cohort'] += 1
-                if c_seg == 'Mobile Only':
-                    b_entry['mob_only'] += 1
-                elif c_seg == 'Laptop Only':
-                    b_entry['lap_only'] += 1
-                else:
-                    b_entry['both'] += 1
-
-                if f_bdm == 'all' or c_bdm == f_bdm:
-                    s_entry = store_cohort[c_store]
-                    s_entry['rbm'] = c_rbm
-                    s_entry['bdm'] = c_bdm
-                    s_entry['cohort'] += 1
-                    if c_seg == 'Mobile Only':
-                        s_entry['mob_only'] += 1
-                    elif c_seg == 'Laptop Only':
-                        s_entry['lap_only'] += 1
-                    else:
-                        s_entry['both'] += 1
-
-        if f_rbm != 'all' and c_rbm != f_rbm:
-            continue
-        if f_bdm != 'all' and c_bdm != f_bdm:
-            continue
-        if f_store != 'all' and c_store != f_store:
-            continue
-        if f_seg != 'all' and c_seg != f_seg:
-            continue
+        if not all_cohort_filters_open:
+            if f_rbm != 'all' and c_rbm != f_rbm:
+                continue
+            if f_bdm != 'all' and c_bdm != f_bdm:
+                continue
+            if f_store != 'all' and c_store != f_store:
+                continue
+            if f_seg != 'all' and c_seg != f_seg:
+                continue
 
         filtered_cohort_count += 1
         filtered_seg_counts[c_seg] += 1
+
+        r_entry = rbm_cohort[c_rbm]
+        r_entry['cohort'] += 1
+        if c_seg == 'Mobile Only':
+            r_entry['mob_only'] += 1
+        elif c_seg == 'Laptop Only':
+            r_entry['lap_only'] += 1
+        else:
+            r_entry['both'] += 1
+
+        b_entry = bdm_cohort[c_bdm]
+        b_entry['rbm'] = c_rbm
+        b_entry['cohort'] += 1
+        if c_seg == 'Mobile Only':
+            b_entry['mob_only'] += 1
+        elif c_seg == 'Laptop Only':
+            b_entry['lap_only'] += 1
+        else:
+            b_entry['both'] += 1
+
+        s_entry = store_cohort[c_store]
+        s_entry['rbm'] = c_rbm
+        s_entry['bdm'] = c_bdm
+        s_entry['cohort'] += 1
+        if c_seg == 'Mobile Only':
+            s_entry['mob_only'] += 1
+        elif c_seg == 'Laptop Only':
+            s_entry['lap_only'] += 1
+        else:
+            s_entry['both'] += 1
 
     # 2. Fetch CE POS sales from ClickHouse (read-only) and match against cohort
     ce_sales_rows, latest_pos_date = _fetch_ce_sales(start_date=start_date, end_date=end_date)
@@ -483,38 +504,6 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
             continue
 
         c_rbm, c_bdm, c_name, c_slab, c_pts, c_store, c_seg, c_brand, c_lpd = rec
-        prod = str(r.get('ce_product') or '').strip().upper()
-        rev = float(r.get('revenue') or 0.0)
-        # Use raw_qty if net_units is 0 for products like AC OUTDOOR so unit count is transparent
-        u = int(r.get('net_units') or 0)
-        raw_u = int(r.get('raw_qty') or 0)
-        eff_units = u if prod != 'AC OUTDOOR' else raw_u
-        inv = str(r.get('invoice_no') or '')
-        s_date = str(r.get('sale_date') or '')
-
-        # Update hierarchy tables (respecting upper-level filters)
-        if (f_seg == 'all' or c_seg == f_seg) and (f_prod == 'all' or prod == f_prod):
-            rp = rbm_perf[c_rbm]
-            rp['buyers'].add(mob)
-            rp['invoices'].add(inv)
-            rp['units'] += eff_units
-            rp['revenue'] += rev
-
-            if f_rbm == 'all' or c_rbm == f_rbm:
-                bp = bdm_perf[c_bdm]
-                bp['buyers'].add(mob)
-                bp['invoices'].add(inv)
-                bp['units'] += eff_units
-                bp['revenue'] += rev
-
-                if f_bdm == 'all' or c_bdm == f_bdm:
-                    sp = store_perf[c_store]
-                    sp['buyers'].add(mob)
-                    sp['invoices'].add(inv)
-                    sp['units'] += eff_units
-                    sp['revenue'] += rev
-
-        # Now apply all active filters for the main KPIs, Product table, Daily table & Customer list
         if not all_cohort_filters_open:
             if f_rbm != 'all' and c_rbm != f_rbm:
                 continue
@@ -525,6 +514,15 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
             if f_seg != 'all' and c_seg != f_seg:
                 continue
 
+        prod = str(r.get('ce_product') or '').strip().upper()
+        rev = float(r.get('revenue') or 0.0)
+        # Use raw_qty if net_units is 0 for products like AC OUTDOOR so unit count is transparent
+        u = int(r.get('net_units') or 0)
+        raw_u = int(r.get('raw_qty') or 0)
+        eff_units = u if prod != 'AC OUTDOOR' else raw_u
+        inv = str(r.get('invoice_no') or '')
+        s_date = str(r.get('sale_date') or '')
+
         # Update 25-product breakdown before filtering by single f_prod so user can see all 25 products
         pp = prod_perf[prod]
         pp['buyers'].add(mob)
@@ -534,6 +532,24 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
 
         if f_prod != 'all' and prod != f_prod:
             continue
+
+        rp = rbm_perf[c_rbm]
+        rp['buyers'].add(mob)
+        rp['invoices'].add(inv)
+        rp['units'] += eff_units
+        rp['revenue'] += rev
+
+        bp = bdm_perf[c_bdm]
+        bp['buyers'].add(mob)
+        bp['invoices'].add(inv)
+        bp['units'] += eff_units
+        bp['revenue'] += rev
+
+        sp = store_perf[c_store]
+        sp['buyers'].add(mob)
+        sp['invoices'].add(inv)
+        sp['units'] += eff_units
+        sp['revenue'] += rev
 
         converted_mobiles.add(mob)
         converted_invoices.add(inv)
