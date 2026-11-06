@@ -32,6 +32,7 @@ DEFAULT_EXCEL_PATH = os.path.join(ROOT_DIR, 'reports', 'mobile lap no CE Nov 202
 FALLBACK_DOWNLOADS_EXCEL = r'c:\Users\deepak.m_myg\Downloads\mobile lap no CE Nov 2025 to oct 31 2026.xlsx'
 CACHE_GZ_PATH = os.path.join(DATA_DIR, 'ce_cohort_customers.csv.gz')
 CACHE_META_PATH = os.path.join(DATA_DIR, 'ce_cohort_meta.json')
+RECOVERED_NOV1_3_PATH = os.path.join(DATA_DIR, 'ce_nov1_3_recovered_customers.json')
 
 # All 25 verified products under im.category = 'CONSUMER ELECTRONICS' in item_master
 ALL_25_CE_PRODUCTS = [
@@ -68,6 +69,7 @@ _COHORT_MEM = {
     'meta': {},
     # mobile -> tuple(rbm, bdm, customer_name, slab, available_points, store_name, segment, brand, last_purchase_date)
     'by_mobile': {},
+    'recovered_nov1_3': {},
     # Pre-indexed filter hierarchy and cohort counts
     'rbm_bdms': {},       # rbm -> sorted list of bdms
     'rbm_bdm_stores': {}, # (rbm, bdm) -> sorted list of stores
@@ -221,10 +223,37 @@ def ensure_cohort_loaded(force=False):
             rbm_bdms[rbm].add(bdm)
             rbm_bdm_stores[(rbm, bdm)].add(sname)
 
+    recovered_nov1_3 = {}
+    if os.path.exists(RECOVERED_NOV1_3_PATH):
+        try:
+            with open(RECOVERED_NOV1_3_PATH, 'r', encoding='utf-8') as rf:
+                raw_rec = json.load(rf)
+            for mob_k, val in raw_rec.items():
+                if isinstance(val, (list, tuple)) and len(val) >= 9 and mob_k not in by_mobile:
+                    rbm = (val[0] or 'UNASSIGNED').strip().upper()
+                    bdm = (val[1] or 'UNASSIGNED').strip().upper()
+                    cname = str(val[2] or '')
+                    slab = str(val[3] or '')
+                    pts = val[4] if val[4] is not None else 0
+                    sname = (val[5] or 'UNASSIGNED').strip().upper()
+                    seg = str(val[6] or 'Mobile Only')
+                    brand = str(val[7] or '')
+                    lpd = str(val[8] or '')
+                    recovered_nov1_3[mob_k] = (rbm, bdm, cname, slab, pts, sname, seg, brand, lpd)
+                    all_rbms.add(rbm)
+                    all_bdms.add(bdm)
+                    all_stores.add(sname)
+                    all_segments.add(seg)
+                    rbm_bdms[rbm].add(bdm)
+                    rbm_bdm_stores[(rbm, bdm)].add(sname)
+        except Exception:
+            recovered_nov1_3 = {}
+
     with _LOCK:
         _COHORT_MEM['loaded'] = True
         _COHORT_MEM['meta'] = meta
         _COHORT_MEM['by_mobile'] = by_mobile
+        _COHORT_MEM['recovered_nov1_3'] = recovered_nov1_3
         _COHORT_MEM['rbm_bdms'] = {k: sorted(v) for k, v in rbm_bdms.items()}
         _COHORT_MEM['rbm_bdm_stores'] = {f"{k[0]}|||{k[1]}": sorted(v) for k, v in rbm_bdm_stores.items()}
         _COHORT_MEM['all_rbms'] = sorted(all_rbms)
@@ -324,6 +353,7 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
     """
     mem = ensure_cohort_loaded()
     by_mobile = mem['by_mobile']
+    recovered_nov1_3 = mem.get('recovered_nov1_3', {})
 
     f_rbm = (rbm or 'all').strip().upper()
     if f_rbm == 'ALL':
@@ -446,10 +476,13 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
 
     for r in ce_sales_rows:
         mob = _clean_mobile(r.get('customer_mobile'))
-        if not mob or mob not in by_mobile:
+        if not mob:
+            continue
+        rec = by_mobile.get(mob) or recovered_nov1_3.get(mob)
+        if not rec:
             continue
 
-        c_rbm, c_bdm, c_name, c_slab, c_pts, c_store, c_seg, c_brand, c_lpd = by_mobile[mob]
+        c_rbm, c_bdm, c_name, c_slab, c_pts, c_store, c_seg, c_brand, c_lpd = rec
         prod = str(r.get('ce_product') or '').strip().upper()
         rev = float(r.get('revenue') or 0.0)
         # Use raw_qty if net_units is 0 for products like AC OUTDOOR so unit count is transparent
