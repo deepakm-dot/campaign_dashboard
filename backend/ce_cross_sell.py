@@ -805,8 +805,8 @@ def export_ce_excel_report(rbm='all', bdm='all', store='all', segment='all', ce_
     ws1.title = 'RBM_Summary'
     _style_sheet(
         ws1,
-        ['RBM', 'Cohort Customers', 'Conversion %', 'CE Units Sold', 'CE Revenue Generated (₹)', 'Untapped Base'],
-        [[r['name'], r['cohort_size'], r['conversion_rate'], r['units_sold'], r['revenue'], r['untapped']]
+        ['RBM', 'Cohort Customers', 'Conversion %', 'Converted Buyers', 'CE Revenue Generated (₹)', 'Untapped Base'],
+        [[r['name'], r['cohort_size'], r['conversion_rate'], r['converted_buyers'], r['revenue'], r['untapped']]
          for r in data['rbm_breakdown']]
     )
 
@@ -814,8 +814,8 @@ def export_ce_excel_report(rbm='all', bdm='all', store='all', segment='all', ce_
     ws2 = wb.create_sheet('BDM_Wise')
     _style_sheet(
         ws2,
-        ['BDM', 'RBM', 'Cohort Customers', 'Conversion %', 'CE Units Sold', 'CE Revenue Generated (₹)', 'Untapped Base'],
-        [[r['name'], r['rbm'], r['cohort_size'], r['conversion_rate'], r['units_sold'], r['revenue'], r['untapped']]
+        ['BDM', 'RBM', 'Cohort Customers', 'Conversion %', 'Converted Buyers', 'CE Revenue Generated (₹)', 'Untapped Base'],
+        [[r['name'], r['rbm'], r['cohort_size'], r['conversion_rate'], r['converted_buyers'], r['revenue'], r['untapped']]
          for r in data['bdm_breakdown']]
     )
 
@@ -823,8 +823,8 @@ def export_ce_excel_report(rbm='all', bdm='all', store='all', segment='all', ce_
     ws3 = wb.create_sheet('Store_Wise')
     _style_sheet(
         ws3,
-        ['Store Name', 'RBM', 'BDM', 'Cohort Customers', 'Conversion %', 'CE Units Sold', 'CE Revenue Generated (₹)', 'Untapped Base'],
-        [[r['name'], r['rbm'], r['bdm'], r['cohort_size'], r['conversion_rate'], r['units_sold'], r['revenue'], r['untapped']]
+        ['Store Name', 'RBM', 'BDM', 'Cohort Customers', 'Conversion %', 'Converted Buyers', 'CE Revenue Generated (₹)', 'Untapped Base'],
+        [[r['name'], r['rbm'], r['bdm'], r['cohort_size'], r['conversion_rate'], r['converted_buyers'], r['revenue'], r['untapped']]
          for r in data['store_breakdown']]
     )
 
