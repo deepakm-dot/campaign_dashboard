@@ -806,19 +806,6 @@ def export_ce_excel_report(rbm='all', bdm='all', store='all', segment='all', ce_
          for idx, r in enumerate(data['products_25_breakdown'], start=1)]
     )
 
-    # Sheet 5: Converted Customer Bills
-    ws5 = wb.create_sheet('Converted_Customer_Bills')
-    _style_sheet(
-        ws5,
-        ['Sale Date', 'Invoice No', 'Customer Mobile', 'Customer Name', 'RBM', 'BDM',
-         'Cohort Store', 'Segment', 'Purchase Store', 'CE Product', 'Item Category',
-         'Brand', 'Item Name', 'Units Sold', 'Revenue Generated (₹)'],
-        [[r['sale_date'], r['invoice_no'], r['customer_mobile'], r['customer_name'], r['rbm'], r['bdm'],
-          r['cohort_store'], r['segment'], r['purchase_store'], r['ce_product'], r['item_category'],
-          r['ce_brand'], r['item_name'], r['units'], r['revenue']]
-         for r in data['converted_bills']]
-    )
-
     bio = io.BytesIO()
     wb.save(bio)
     bio.seek(0)
