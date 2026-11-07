@@ -3893,7 +3893,6 @@ function renderActiveCeSubTab() {
     thead.innerHTML = `<tr>
       <th>#</th>
       <th>CE Product (CONSUMER ELECTRONICS)</th>
-      <th>Items Included</th>
       <th style="text-align:right;">SKUs in Master</th>
       <th style="text-align:right;">Converted Buyers</th>
       <th style="text-align:right;">CE Invoices</th>
@@ -3907,7 +3906,6 @@ function renderActiveCeSubTab() {
       return `<tr style="cursor:pointer;" onclick="drillCeFilter('product','${safeProd}')" title="Click to filter bills for ${r.product}">
         <td style="color:var(--muted);font-weight:600;">${i + 1}</td>
         <td style="font-weight:700;color:#1e293b;">${r.product}</td>
-        <td style="font-size:12px;color:#64748b;max-width:340px;">${r.description || ''}</td>
         <td style="text-align:right;color:#475569;font-weight:600;">${Number(r.skus_in_master).toLocaleString('en-IN')}</td>
         <td style="text-align:right;font-weight:700;color:${r.converted_buyers > 0 ? '#059669' : '#64748b'};">${Number(r.converted_buyers).toLocaleString('en-IN')}</td>
         <td style="text-align:right;font-weight:600;">${Number(r.invoices).toLocaleString('en-IN')}</td>
