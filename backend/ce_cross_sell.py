@@ -288,9 +288,8 @@ def _fetch_ce_sales(start_date='2026-11-01', end_date=''):
             "regexpExtract(s.item_code, '^[A-Z]+', 0) IN ('VMC', 'WTH', 'CMY', 'WPU'), 'HOME APPLIANCES', "
             "'HOME APPLIANCES'))"
         )
-        is_od_expr = f"(({prod_expr}) = 'AC OUTDOOR' OR lower(coalesce(im.item_category, '')) = 'ac outdoor' OR lower(coalesce(im.item_name, '')) LIKE 'o/d%')"
-        units_expr = f"if({is_od_expr}, 0, if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), if(toFloat64(s.sold_price) < 0, 0, toInt64(s.qty))))"
-        raw_qty_expr = "if(s.invoice_no LIKE '%-SR-%', -abs(toInt64(s.qty)), toInt64(s.qty))"
+        units_expr = "toInt64(s.qty)"
+        raw_qty_expr = "toInt64(s.qty)"
 
         sql = f"""
             SELECT
