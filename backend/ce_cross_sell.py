@@ -458,6 +458,7 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
     store_perf = defaultdict(lambda: {'buyers': set(), 'invoices': set(), 'units': 0, 'revenue': 0.0})
     seg_perf = defaultdict(lambda: {'buyers': set(), 'invoices': set(), 'units': 0, 'revenue': 0.0})
     prod_perf = defaultdict(lambda: {'buyers': set(), 'invoices': set(), 'units': 0, 'revenue': 0.0})
+    mob_prod_stats = defaultdict(lambda: defaultdict(lambda: [0.0, 0]))
     daily_perf = defaultdict(lambda: {'buyers': set(), 'invoices': set(), 'units': 0, 'revenue': 0.0, 'prods': Counter()})
 
     customer_bills = []
@@ -496,6 +497,9 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
         pp['invoices'].add(inv)
         pp['units'] += eff_units
         pp['revenue'] += rev
+        mp_entry = mob_prod_stats[mob][prod]
+        mp_entry[0] += rev
+        mp_entry[1] += eff_units
 
         if f_prod != 'all' and prod != f_prod:
             continue
@@ -626,6 +630,17 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
         })
     store_table.sort(key=lambda x: (x['revenue'], x['units_sold'], x['cohort_size']), reverse=True)
 
+    # Attribute each unique converted customer once to their primary (highest-revenue) CE product
+    # so the sum of Converted Buyers across all 25 products equals the exact unique Converted CE Buyers count.
+    primary_prod_buyers = Counter()
+    for mob_k, p_map in mob_prod_stats.items():
+        if p_map:
+            best_prod = max(
+                p_map.keys(),
+                key=lambda pk: (1 if pk != 'AC OUTDOOR' else 0, p_map[pk][0], p_map[pk][1])
+            )
+            primary_prod_buyers[best_prod] += 1
+
     products_table = []
     total_all_prod_rev = sum(v['revenue'] for v in prod_perf.values())
     for item in ALL_25_CE_PRODUCTS:
@@ -636,7 +651,7 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
             'product': p_name,
             'skus_in_master': item['skus'],
             'description': item['description'],
-            'converted_buyers': len(p_info['buyers']),
+            'converted_buyers': primary_prod_buyers[p_name],
             'invoices': len(p_info['invoices']),
             'units_sold': p_info['units'],
             'revenue': rev,
