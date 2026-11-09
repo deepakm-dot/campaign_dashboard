@@ -1901,6 +1901,7 @@ def api_ce_cross_sell():
         return response
     try:
         import ce_cross_sell
+        force = request.query.get('force') in ('1', 'true', 'True')
         return ce_cross_sell.get_ce_dashboard_data(
             rbm=request.query.get('rbm', 'all'),
             bdm=request.query.get('bdm', 'all'),
@@ -1909,7 +1910,8 @@ def api_ce_cross_sell():
             ce_product=request.query.get('ce_product', 'all'),
             start_date=request.query.get('start_date', '2026-11-01'),
             end_date=request.query.get('end_date', ''),
-            search=request.query.get('search', '')
+            search=request.query.get('search', ''),
+            force=force
         )
     except Exception as e:
         response.status = 500
@@ -1942,9 +1944,16 @@ def api_ce_cross_sell_reload():
         return response
     try:
         import ce_cross_sell
-        meta = ce_cross_sell.build_cache_from_excel()
-        ce_cross_sell.ensure_cohort_loaded(force=True)
-        return {'status': 'ok', 'meta': meta}
+        # Clear POS sales cache so ClickHouse is queried fresh
+        ce_cross_sell.invalidate_sales_cache()
+        ce_cross_sell.ensure_cohort_loaded()
+        data = ce_cross_sell.get_ce_dashboard_data(force=True)
+        return {
+            'status': 'ok',
+            'latest_pos_date': data['meta'].get('latest_pos_date', ''),
+            'kpis': data.get('kpis', {}),
+            'refreshed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
     except Exception as e:
         response.status = 500
         return {'status': 'error', 'error': str(e)}

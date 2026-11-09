@@ -84,6 +84,18 @@ _SALES_CACHE = {
 }
 
 
+def invalidate_sales_cache():
+    """Clear cached ClickHouse POS sales so subsequent queries fetch fresh data."""
+    global _SALES_CACHE
+    with _LOCK:
+        _SALES_CACHE = {
+            'key': None,
+            'ts': 0,
+            'rows': [],
+            'latest_pos_date': ''
+        }
+
+
 def _clean_mobile(val):
     s = str(val or '').strip()
     if s.endswith('.0'):
@@ -247,7 +259,7 @@ def ensure_cohort_loaded(force=False):
         return _COHORT_MEM
 
 
-def _fetch_ce_sales(start_date='2026-11-01', end_date=''):
+def _fetch_ce_sales(start_date='2026-11-01', end_date='', force=False):
     """
     Strictly READ-ONLY ClickHouse query (`ch_db.query` with `readonly=1`) fetching
     all Consumer Electronics (`im.category = 'CONSUMER ELECTRONICS'`) sales transactions
@@ -258,7 +270,7 @@ def _fetch_ce_sales(start_date='2026-11-01', end_date=''):
     base_sd = '2026-11-01' if sd >= '2026-11-01' else sd
     now = time.time()
 
-    if _SALES_CACHE.get('key') == base_sd and (now - _SALES_CACHE.get('ts', 0)) < 300 and _SALES_CACHE.get('rows'):
+    if not force and _SALES_CACHE.get('key') == base_sd and (now - _SALES_CACHE.get('ts', 0)) < 300 and _SALES_CACHE.get('rows'):
         base_rows = _SALES_CACHE['rows']
         latest_pos_date = _SALES_CACHE['latest_pos_date']
     else:
@@ -332,7 +344,7 @@ def _fetch_ce_sales(start_date='2026-11-01', end_date=''):
 
 
 def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_product='all',
-                          start_date='2026-11-01', end_date='', search=''):
+                          start_date='2026-11-01', end_date='', search='', force=False):
     """
     Compute complete CE Cross-Sell dashboard analytics for the selected filters:
     - Filter options (RBMs, cascading BDMs, cascading Stores, Segments, 25 CE Products)
@@ -444,7 +456,7 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
             s_entry['both'] += 1
 
     # 2. Fetch CE POS sales from ClickHouse (read-only) and match against cohort
-    ce_sales_rows, latest_pos_date = _fetch_ce_sales(start_date=start_date, end_date=end_date)
+    ce_sales_rows, latest_pos_date = _fetch_ce_sales(start_date=start_date, end_date=end_date, force=force)
 
     converted_mobiles = set()
     converted_invoices = set()
