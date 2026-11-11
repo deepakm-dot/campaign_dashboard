@@ -259,7 +259,7 @@ def ensure_cohort_loaded(force=False):
         return _COHORT_MEM
 
 
-def _fetch_ce_sales(start_date='2026-11-01', end_date='', force=False):
+def _fetch_ce_sales(start_date='2026-11-01', end_date='', force=False, include_cumulative=False):
     """
     Strictly READ-ONLY ClickHouse query (`ch_db.query` with `readonly=1`) fetching
     all Consumer Electronics (`im.category = 'CONSUMER ELECTRONICS'`) sales transactions
@@ -334,13 +334,27 @@ def _fetch_ce_sales(start_date='2026-11-01', end_date='', force=False):
         _SALES_CACHE['latest_pos_date'] = latest_pos_date
 
     if sd == base_sd and not ed:
-        return base_rows, latest_pos_date
+        filtered_rows = base_rows
+    else:
+        filtered_rows = [
+            r for r in base_rows
+            if str(r.get('sale_date') or '') >= sd and (not ed or str(r.get('sale_date') or '') <= ed)
+        ]
 
-    filtered_rows = [
-        r for r in base_rows
-        if str(r.get('sale_date') or '') >= sd and (not ed or str(r.get('sale_date') or '') <= ed)
-    ]
-    return filtered_rows, latest_pos_date
+    if not include_cumulative:
+        return filtered_rows, latest_pos_date
+
+    # Untapped Base always deducts cumulative conversions starting from 2026-11-01 up to end_date
+    if sd == '2026-11-01':
+        cum_rows = filtered_rows
+    elif base_sd == '2026-11-01' and not ed:
+        cum_rows = base_rows
+    else:
+        cum_rows = [
+            r for r in base_rows
+            if str(r.get('sale_date') or '') >= '2026-11-01' and (not ed or str(r.get('sale_date') or '') <= ed)
+        ]
+    return filtered_rows, cum_rows, latest_pos_date
 
 
 def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_product='all',
@@ -456,7 +470,9 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
             s_entry['both'] += 1
 
     # 2. Fetch CE POS sales from ClickHouse (read-only) and match against cohort
-    ce_sales_rows, latest_pos_date = _fetch_ce_sales(start_date=start_date, end_date=end_date, force=force)
+    ce_sales_rows, cum_sales_rows, latest_pos_date = _fetch_ce_sales(
+        start_date=start_date, end_date=end_date, force=force, include_cumulative=True
+    )
 
     converted_mobiles = set()
     converted_invoices = set()
@@ -577,11 +593,49 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
                 continue
         customer_bills.append(bill_item)
 
+    # 2b. Compute cumulative converted buyers from 2026-11-01 up to end_date for Untapped Base
+    if cum_sales_rows is ce_sales_rows:
+        cum_converted_mobiles = converted_mobiles
+        cum_rbm_buyers = {k: p['buyers'] for k, p in rbm_perf.items()}
+        cum_bdm_buyers = {k: p['buyers'] for k, p in bdm_perf.items()}
+        cum_store_buyers = {k: p['buyers'] for k, p in store_perf.items()}
+    else:
+        cum_converted_mobiles = set()
+        cum_rbm_buyers = defaultdict(set)
+        cum_bdm_buyers = defaultdict(set)
+        cum_store_buyers = defaultdict(set)
+        for r in cum_sales_rows:
+            mob = _clean_mobile(r.get('customer_mobile'))
+            if not mob:
+                continue
+            rec = by_mobile.get(mob)
+            if not rec:
+                continue
+            c_rbm, c_bdm, _, _, _, c_store, c_seg, _, _ = rec
+            if not all_cohort_filters_open:
+                if f_rbm != 'all' and c_rbm != f_rbm:
+                    continue
+                if f_bdm != 'all' and c_bdm != f_bdm:
+                    continue
+                if f_store != 'all' and c_store != f_store:
+                    continue
+                if f_seg != 'all' and c_seg != f_seg:
+                    continue
+            if f_prod != 'all':
+                prod = str(r.get('ce_product') or '').strip().upper()
+                if prod != f_prod:
+                    continue
+            cum_converted_mobiles.add(mob)
+            cum_rbm_buyers[c_rbm].add(mob)
+            cum_bdm_buyers[c_bdm].add(mob)
+            cum_store_buyers[c_store].add(mob)
+
     # 3. Format RBM, BDM, Store, Segment, 25-Product, and Daily tables
     rbm_table = []
     for k, c_info in rbm_cohort.items():
         p_info = rbm_perf[k]
         b_cnt = len(p_info['buyers'])
+        cum_b_cnt = len(cum_rbm_buyers.get(k, ()))
         c_cnt = c_info['cohort']
         rbm_table.append({
             'name': k,
@@ -594,7 +648,7 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
             'invoices': len(p_info['invoices']),
             'units_sold': p_info['units'],
             'revenue': round(p_info['revenue'], 2),
-            'untapped': max(0, c_cnt - b_cnt)
+            'untapped': max(0, c_cnt - cum_b_cnt)
         })
     rbm_table.sort(key=lambda x: (x['revenue'], x['units_sold'], x['cohort_size']), reverse=True)
 
@@ -602,6 +656,7 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
     for k, c_info in bdm_cohort.items():
         p_info = bdm_perf[k]
         b_cnt = len(p_info['buyers'])
+        cum_b_cnt = len(cum_bdm_buyers.get(k, ()))
         c_cnt = c_info['cohort']
         bdm_table.append({
             'name': k,
@@ -615,7 +670,7 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
             'invoices': len(p_info['invoices']),
             'units_sold': p_info['units'],
             'revenue': round(p_info['revenue'], 2),
-            'untapped': max(0, c_cnt - b_cnt)
+            'untapped': max(0, c_cnt - cum_b_cnt)
         })
     bdm_table.sort(key=lambda x: (x['revenue'], x['units_sold'], x['cohort_size']), reverse=True)
 
@@ -623,6 +678,7 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
     for k, c_info in store_cohort.items():
         p_info = store_perf[k]
         b_cnt = len(p_info['buyers'])
+        cum_b_cnt = len(cum_store_buyers.get(k, ()))
         c_cnt = c_info['cohort']
         store_table.append({
             'name': k,
@@ -637,7 +693,7 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
             'invoices': len(p_info['invoices']),
             'units_sold': p_info['units'],
             'revenue': round(p_info['revenue'], 2),
-            'untapped': max(0, c_cnt - b_cnt)
+            'untapped': max(0, c_cnt - cum_b_cnt)
         })
     store_table.sort(key=lambda x: (x['revenue'], x['units_sold'], x['cohort_size']), reverse=True)
 
@@ -685,7 +741,7 @@ def get_ce_dashboard_data(rbm='all', bdm='all', store='all', segment='all', ce_p
 
     conv_count = len(converted_mobiles)
     conv_rate = round((conv_count / filtered_cohort_count * 100), 3) if filtered_cohort_count > 0 else 0.0
-    untapped_count = max(0, filtered_cohort_count - conv_count)
+    untapped_count = max(0, filtered_cohort_count - len(cum_converted_mobiles))
 
     return {
         'status': 'ok',
