@@ -1979,6 +1979,36 @@ def api_ce_cross_sell_reload():
         response.status = 500
         return {'status': 'error', 'error': str(e)}
 
+@app.route('/api/ce-upselling', method=['GET', 'OPTIONS'])
+def api_ce_upselling():
+    if request.method == 'OPTIONS':
+        return response
+    try:
+        import ce_upselling
+        force = request.query.get('force') in ('1', 'true', 'True')
+        return ce_upselling.get_ce_upselling_data(force=force)
+    except Exception as e:
+        response.status = 500
+        return {'status': 'error', 'error': str(e)}
+
+@app.route('/api/ce-upselling/reload', method=['POST', 'OPTIONS'])
+def api_ce_upselling_reload():
+    if request.method == 'OPTIONS':
+        return response
+    try:
+        import ce_upselling
+        ce_upselling.invalidate_upsell_cache()
+        data = ce_upselling.get_ce_upselling_data(force=True)
+        return {
+            'status': 'ok',
+            'latest_pos_date': data.get('meta', {}).get('latest_pos_date', ''),
+            'kpis': data.get('kpis', {}),
+            'refreshed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+    except Exception as e:
+        response.status = 500
+        return {'status': 'error', 'error': str(e)}
+
 @app.route('/<filepath:path>')
 def serve_static(filepath):
     frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'frontend')

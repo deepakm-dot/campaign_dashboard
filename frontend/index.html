@@ -1046,6 +1046,11 @@
         CE Cross-Sell
         <span style="margin-left:auto;font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px;background:#ecfdf5;color:#059669;border:1px solid #a7f3d0;">5.45L</span>
       </a>
+      <a class="nav-item" onclick="nav('ce-upsell',this)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+        CE Upselling
+        <span id="sidebar-ceu-pill" style="margin-left:auto;font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px;background:#eef2ff;color:#4f46e5;border:1px solid #c7d2fe;display:none;"></span>
+      </a>
     </div>
     <div class="sidebar-footer">
       <div class="sync-badge">
@@ -1430,6 +1435,64 @@
       </div>
     </div>
 
+    <!-- CE UPSELLING PAGE -->
+    <div class="content" id="pg-ce-upsell" style="display:none;">
+      <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;margin-bottom:24px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#eef2ff 0%,#e0e7ff 100%);border:1px solid #c7d2fe;display:flex;align-items:center;justify-content:center;color:#4f46e5;box-shadow:0 1px 2px rgba(79,70,229,0.08);flex-shrink:0;">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+          </div>
+          <div>
+            <h1 style="font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:21px;font-weight:600;letter-spacing:-0.02em;color:#0f172a;line-height:1.25;margin:0;-webkit-font-smoothing:antialiased;">CE Upselling</h1>
+            <div style="font-size:11.5px;color:#64748b;margin-top:3px;display:flex;align-items:center;gap:6px;">
+              <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#10b981;"></span>
+              <span>ClickHouse POS Data Synced Till: <strong id="ceu-latest-pos-date" style="color:#0f172a;">—</strong></span>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <button class="btn-refresh" id="ceu-refresh-btn" onclick="refreshCeUpselling()" style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;padding:8px 14px;border-radius:8px;color:#334155;">
+            <svg id="ceu-refresh-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+            <span id="ceu-refresh-txt">Refresh Upsell Data</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 3 KPI CARDS -->
+      <div class="kpi-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;">
+        <!-- KPI CARD 1: TELEVISION -->
+        <div class="kpi-card c1">
+          <div class="kpi-icon">&#x1F4FA;</div>
+          <div class="kpi-label" style="font-size:10.5px;font-weight:700;letter-spacing:0.06em;color:#64748b;">Television &bull; 32&Prime; Upgrade Cohort</div>
+          <div class="kpi-value" id="ceu-kv-tv" style="font-size:34px;font-weight:800;letter-spacing:-0.025em;font-variant-numeric:tabular-nums;">&mdash;</div>
+          <div class="kpi-sub" id="ceu-kv-tv-sub" style="font-size:11.5px;color:#64748b;margin-top:8px;line-height:1.45;">
+            Bought 32&Prime; TV (any brand) on or before <strong>01 Nov 2024</strong> &bull; No TV bought after
+          </div>
+          <div id="ceu-kv-tv-pills" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;font-size:11px;font-weight:500;"></div>
+        </div>
+
+        <!-- KPI CARD 2 -->
+        <div class="kpi-card c2">
+          <div class="kpi-icon">&#x1F4C8;</div>
+          <div class="kpi-label" style="font-size:10.5px;font-weight:700;letter-spacing:0.06em;color:#64748b;">Upsell Cohort 2</div>
+          <div class="kpi-value" id="ceu-kv-c2" style="font-size:34px;font-weight:800;letter-spacing:-0.025em;font-variant-numeric:tabular-nums;">&mdash;</div>
+          <div class="kpi-sub" style="font-size:11.5px;color:#64748b;margin-top:8px;line-height:1.45;">
+            Awaiting category &amp; purchase date criteria
+          </div>
+        </div>
+
+        <!-- KPI CARD 3 -->
+        <div class="kpi-card c3">
+          <div class="kpi-icon">&#x2728;</div>
+          <div class="kpi-label" style="font-size:10.5px;font-weight:700;letter-spacing:0.06em;color:#64748b;">Upsell Cohort 3</div>
+          <div class="kpi-value" id="ceu-kv-c3" style="font-size:34px;font-weight:800;letter-spacing:-0.025em;font-variant-numeric:tabular-nums;">&mdash;</div>
+          <div class="kpi-sub" style="font-size:11.5px;color:#64748b;margin-top:8px;line-height:1.45;">
+            Awaiting category &amp; purchase date criteria
+          </div>
+        </div>
+      </div>
+    </div>
+
   </main>
 </div>
 
@@ -1461,15 +1524,18 @@ setInterval(tick,1000); tick();
 
 /* ---- NAV ---- */
 function nav(page, el){
-  ['overview','campaigns','ai','ce'].forEach(p => {
+  ['overview','campaigns','ai','ce','ce-upsell'].forEach(p => {
     const pageEl = document.getElementById('pg-'+p);
     if(pageEl) pageEl.style.display = p===page?'':'none';
   });
   document.querySelectorAll('.nav-item').forEach(x => x.classList.remove('active'));
   if(el) el.classList.add('active');
-  const titles = {overview:'Executive Overview',campaigns:'Campaign Groups',ai:'AI Assistant · ClickHouse Intelligence',ce:'CE Cross-Sell Cohort Tracker'};
+  const titles = {overview:'Executive Overview',campaigns:'Campaign Groups',ai:'AI Assistant · ClickHouse Intelligence',ce:'CE Cross-Sell Cohort Tracker','ce-upsell':'CE Upselling'};
   if(page==='ce') {
     loadCeCrossSell();
+  }
+  if(page==='ce-upsell') {
+    loadCeUpselling();
   }
   document.getElementById('crumb').textContent = titles[page]||page;
   if(page==='ai') {
@@ -4191,6 +4257,101 @@ function renderActiveCeSubTab() {
     </tr>`).join('');
   }
 }
+
+/* ---- CE UPSELLING ---- */
+let _ceuData = null;
+let _ceuLoading = false;
+
+async function loadCeUpselling(force = false) {
+  if (_ceuLoading && !force) return;
+  const tvEl = document.getElementById('ceu-kv-tv');
+  if (tvEl && !_ceuData) {
+    tvEl.innerHTML = `<span style="font-size:18px;font-weight:600;color:#64748b;">Loading&hellip;</span>`;
+  }
+  _ceuLoading = true;
+  try {
+    const res = await fetch('/api/ce-upselling' + (force ? '?force=1' : ''));
+    const data = await res.json();
+    if (!res.ok || data.status === 'error') {
+      throw new Error(data.error || 'Failed to load CE Upselling data');
+    }
+    _ceuData = data;
+    const tv = data.kpis?.tv_upsell || {};
+    const eligible = Number(tv.eligible_customers || 0);
+    const total32 = Number(tv.total_32_buyers_on_or_before || 0);
+    const afterTv = Number(tv.bought_tv_after || 0);
+
+    if (tvEl) tvEl.textContent = eligible.toLocaleString('en-IN');
+
+    const pillsEl = document.getElementById('ceu-kv-tv-pills');
+    if (pillsEl) {
+      pillsEl.innerHTML = `
+        <span style="display:inline-flex;align-items:center;gap:5px;background:#eef2ff;color:#4338ca;border:1px solid #e0e7ff;padding:3px 8px;border-radius:6px;font-variant-numeric:tabular-nums;">
+          <span style="width:6px;height:6px;border-radius:50%;background:#4f46e5;"></span>32&Prime; Buyers &le; 01 Nov 2024: <strong>${total32.toLocaleString('en-IN')}</strong>
+        </span>
+        <span style="display:inline-flex;align-items:center;gap:5px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;padding:3px 8px;border-radius:6px;font-variant-numeric:tabular-nums;">
+          <span style="width:6px;height:6px;border-radius:50%;background:#ef4444;"></span>Bought TV After: <strong>${afterTv.toLocaleString('en-IN')}</strong>
+        </span>
+      `;
+    }
+
+    const latestPos = data.meta?.latest_pos_date || '';
+    const posEl = document.getElementById('ceu-latest-pos-date');
+    if (posEl && latestPos) {
+      const parts = latestPos.split('-');
+      const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      posEl.textContent = parts.length === 3
+        ? `${parts[2]} ${MONTH_NAMES[parseInt(parts[1], 10) - 1]} ${parts[0]}`
+        : latestPos;
+    }
+
+    const pill = document.getElementById('sidebar-ceu-pill');
+    if (pill && eligible > 0) {
+      pill.textContent = num(eligible);
+      pill.style.display = 'inline-block';
+    }
+  } catch (err) {
+    console.error('[CE Upselling Error]', err);
+    if (tvEl) {
+      tvEl.innerHTML = `<span style="font-size:15px;font-weight:600;color:#dc2626;">Error loading</span>`;
+    }
+  } finally {
+    _ceuLoading = false;
+  }
+}
+
+async function refreshCeUpselling() {
+  const btn = document.getElementById('ceu-refresh-btn');
+  const txt = document.getElementById('ceu-refresh-txt');
+  const icon = document.getElementById('ceu-refresh-icon');
+  if (btn) btn.disabled = true;
+  if (txt) txt.textContent = 'Syncing ClickHouse…';
+  if (icon) icon.classList.add('spinning');
+  try {
+    const res = await fetch('/api/ce-upselling/reload', { method: 'POST' });
+    const resData = await res.json();
+    if (!res.ok || resData.status === 'error') {
+      throw new Error(resData.error || 'Failed to refresh CE Upselling');
+    }
+    await loadCeUpselling(false);
+    if (txt) txt.textContent = 'Updated!';
+    setTimeout(() => {
+      if (txt) txt.textContent = 'Refresh Upsell Data';
+    }, 2000);
+  } catch (err) {
+    console.error('[Refresh CE Upselling Error]', err);
+    alert('Error refreshing CE Upselling: ' + err.message);
+    if (txt) txt.textContent = 'Refresh Failed';
+    setTimeout(() => {
+      if (txt) txt.textContent = 'Refresh Upsell Data';
+    }, 2500);
+  } finally {
+    if (btn) btn.disabled = false;
+    if (icon) icon.classList.remove('spinning');
+  }
+}
+
+setTimeout(() => { loadCeUpselling(false); }, 1500);
 </script>
 </body>
 </html>
