@@ -956,8 +956,16 @@ def export_ce_rbm_summary_excel(rbm='all', bdm='all', store='all', segment='all'
         c.border = cell_border
     ws.row_dimensions[2].height = 22
 
-    # Rows 3..N: RBM Data Rows
-    rbm_rows = data.get('rbm_breakdown', [])
+    # Rows 3..N: RBM Data Rows (sorted by Conversion % highest to lowest)
+    rbm_rows = sorted(
+        data.get('rbm_breakdown', []),
+        key=lambda r: (
+            (int(r.get('converted_buyers', 0)) / int(r.get('cohort_size', 1))) if int(r.get('cohort_size', 0)) > 0 else 0.0,
+            int(r.get('converted_buyers', 0)),
+            float(r.get('revenue', 0.0))
+        ),
+        reverse=True
+    )
     total_cohort = 0
     total_buyers = 0
     total_rev = 0
