@@ -1279,6 +1279,10 @@
           </div>
         </div>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <button class="btn-refresh" onclick="exportCeRbmSummaryExcel()" title="Download single-sheet CE Cross Purchase RBM summary Excel" style="background:#9f1239;color:#ffffff;border-color:#9f1239;display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;padding:8px 14px;border-radius:8px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export RBM Summary
+          </button>
           <button class="btn-refresh" onclick="exportCeCrossSellExcel()" style="background:#059669;color:#ffffff;border-color:#059669;display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;padding:8px 14px;border-radius:8px;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Export Excel Report
@@ -3676,6 +3680,11 @@ function resetCeFilters() {
 function exportCeCrossSellExcel() {
   const qs = _ceQueryParams().toString();
   window.location.href = '/api/ce-cross-sell/export?' + qs;
+}
+
+function exportCeRbmSummaryExcel() {
+  const qs = _ceQueryParams().toString();
+  window.location.href = '/api/ce-cross-sell/export-rbm?' + qs;
 }
 
 function _populateCeSelect(id, items, defaultLabel, selectedVal) {

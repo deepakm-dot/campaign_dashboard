@@ -837,3 +837,128 @@ def export_ce_excel_report(rbm='all', bdm='all', store='all', segment='all', ce_
     bio.seek(0)
     return bio.read()
 
+
+def export_ce_rbm_summary_excel(rbm='all', bdm='all', store='all', segment='all', ce_product='all',
+                                start_date='2026-11-01', end_date=''):
+    """Generate a single-sheet RBM Summary Excel report ('CE Cross Purchase') matching the executive summary format."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    data = get_ce_dashboard_data(
+        rbm=rbm, bdm=bdm, store=store, segment=segment,
+        ce_product=ce_product, start_date=start_date, end_date=end_date
+    )
+
+    def _fmt_dmy(iso_date):
+        s = (iso_date or '').strip()[:10]
+        parts = s.split('-')
+        if len(parts) == 3 and len(parts[0]) == 4:
+            return f"{parts[2]}-{parts[1]}-{parts[0]}"
+        return s
+
+    sd_raw = data['meta'].get('start_date') or (start_date or '2026-11-01')[:10]
+    ed_raw = data['meta'].get('end_date') or data['meta'].get('latest_pos_date') or datetime.now().strftime('%Y-%m-%d')
+    title_text = f"CE Cross Purchase ({_fmt_dmy(sd_raw)} - {_fmt_dmy(ed_raw)})"
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'CE Cross Purchase'
+
+    pink_fill = PatternFill(start_color='FCD9DF', end_color='FCD9DF', fill_type='solid')
+    white_fill = PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
+
+    title_font = Font(name='Calibri', size=12, bold=True, color='7A1C28')
+    hdr_font = Font(name='Calibri', size=11, bold=True, color='7A1C28')
+    data_font = Font(name='Calibri', size=11, bold=False, color='000000')
+    total_font = Font(name='Calibri', size=12, bold=True, color='7A1C28')
+
+    center_align = Alignment(horizontal='center', vertical='center')
+    thin_black = Side(style='thin', color='000000')
+    cell_border = Border(left=thin_black, right=thin_black, top=thin_black, bottom=thin_black)
+
+    indian_int_fmt = '[>=10000000]#\\,##\\,##\\,##0;[>=100000]#\\,##\\,##0;#,##0'
+
+    # Row 1: Merged Title Banner (A1:F1)
+    ws.merge_cells('A1:F1')
+    ws.cell(row=1, column=1, value=title_text)
+    for col_idx in range(1, 7):
+        c = ws.cell(row=1, column=col_idx)
+        c.fill = pink_fill
+        c.font = title_font
+        c.alignment = center_align
+        c.border = cell_border
+    ws.row_dimensions[1].height = 23
+
+    # Row 2: Column Headers
+    headers = ['RBM', 'Cohort Customers', 'Conversion %', 'Converted Buyers', 'Revenue Generated', 'Untapped Base']
+    for col_idx, h_text in enumerate(headers, start=1):
+        c = ws.cell(row=2, column=col_idx, value=h_text)
+        c.fill = pink_fill
+        c.font = hdr_font
+        c.alignment = center_align
+        c.border = cell_border
+    ws.row_dimensions[2].height = 22
+
+    # Rows 3..N: RBM Data Rows
+    rbm_rows = data.get('rbm_breakdown', [])
+    total_cohort = 0
+    total_buyers = 0
+    total_rev = 0
+    total_untapped = 0
+
+    for idx, r in enumerate(rbm_rows, start=3):
+        cohort_sz = int(r.get('cohort_size', 0))
+        buyers = int(r.get('converted_buyers', 0))
+        conv_ratio = (buyers / cohort_sz) if cohort_sz > 0 else 0.0
+        rev_int = int(round(float(r.get('revenue', 0.0))))
+        untapped = int(r.get('untapped', max(0, cohort_sz - buyers)))
+
+        total_cohort += cohort_sz
+        total_buyers += buyers
+        total_rev += rev_int
+        total_untapped += untapped
+
+        row_vals = [r.get('name', ''), cohort_sz, conv_ratio, buyers, rev_int, untapped]
+        for col_idx, val in enumerate(row_vals, start=1):
+            c = ws.cell(row=idx, column=col_idx, value=val)
+            c.fill = white_fill
+            c.font = data_font
+            c.alignment = center_align
+            c.border = cell_border
+            if col_idx in (2, 4):
+                c.number_format = '0'
+            elif col_idx == 3:
+                c.number_format = '0.00%'
+            elif col_idx in (5, 6):
+                c.number_format = indian_int_fmt
+        ws.row_dimensions[idx].height = 20
+
+    # Final Row: Total
+    total_row_idx = len(rbm_rows) + 3
+    total_conv_ratio = (total_buyers / total_cohort) if total_cohort > 0 else 0.0
+    total_vals = ['Total', total_cohort, total_conv_ratio, total_buyers, total_rev, total_untapped]
+    for col_idx, val in enumerate(total_vals, start=1):
+        c = ws.cell(row=total_row_idx, column=col_idx, value=val)
+        c.fill = pink_fill
+        c.font = total_font
+        c.alignment = center_align
+        c.border = cell_border
+        if col_idx in (2, 4):
+            c.number_format = '0'
+        elif col_idx == 3:
+            c.number_format = '0.00%'
+        elif col_idx in (5, 6):
+            c.number_format = indian_int_fmt
+    ws.row_dimensions[total_row_idx].height = 23
+
+    col_widths = [20, 20, 17, 20, 22, 18]
+    for i, w in enumerate(col_widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return bio.read()
+
+
